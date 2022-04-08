@@ -1,5 +1,5 @@
 CXX=g++
-CXXFLAGS=
+CXXFLAGS=-std=c++11
 #add C++ source files here
 SRCS=mips_sim.cc
 TARGET=mips-sim
