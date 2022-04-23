@@ -72,7 +72,6 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-
     class MonteCarloHadler extends Handler {
         @Override
         public void handleMessage(@NonNull Message msg) {
@@ -95,5 +94,3 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 }
-
-
