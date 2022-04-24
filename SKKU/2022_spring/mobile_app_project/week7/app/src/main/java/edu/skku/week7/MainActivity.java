@@ -48,7 +48,7 @@ public class MainActivity extends AppCompatActivity {
 
             HttpUrl.Builder urlBuilder = HttpUrl.parse("http://www.omdbapi.com/").newBuilder();
             //urlBuilder.addQueryParameter("page", "2");
-            urlBuilder.addQueryParameter("apikey", api_key);
+            urlBuilder.addQueryParameter("apikey", ap i_key);
             urlBuilder.addQueryParameter("t", editText.getText().toString());
 
             Log.d("movie name", editText.getText().toString());
