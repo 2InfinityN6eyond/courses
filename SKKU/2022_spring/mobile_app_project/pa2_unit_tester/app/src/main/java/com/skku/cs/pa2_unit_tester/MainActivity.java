@@ -1,11 +1,28 @@
 package com.skku.cs.pa2_unit_tester;
 
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 
+import android.content.Intent;
 import android.os.Bundle;
+import android.util.Log;
+import android.widget.Button;
 import android.widget.GridView;
+import android.widget.TextView;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
+
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.HttpUrl;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -14,53 +31,98 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        ArrayList<Integer> items = new ArrayList<Integer>();
-        //{14. 10, 10, 9, 13, 12, 8, 9, 6, 1, 5, 5, 4, 11, 5, 5, 5, 7, 12, 3};
-        //for (int i = 0; i < 10; i++) {
-        //    items.add(i);
-        //}
-        items.add(14);
-        items.add(10);
-        items.add(10);
-        items.add(9);
-        items.add(13);
-
-        items.add(12);
-        items.add(8);
-        items.add(9);
-        items.add(6);
-        items.add(1);
-
-        items.add(5);
-        items.add(5);
-        items.add(4);
-        items.add(11);
-        items.add(5);
-
-        items.add(5);
-        items.add(5);
-        items.add(7);
-        items.add(12);
-        items.add(3);
-
-        items.add(7);
-        items.add(6);
-        items.add(10);
-        items.add(2);
-        items.add(11 + 16);
 
 
-        int num_column = 2;
+        String maze_name = "maze4";
+        String server_addr = "http://115.145.175.57:10099";
 
-        GridView gridView = (GridView) findViewById(R.id.grid_view);
-        gridView.setNumColumns(num_column);
-        GridViewAdapter adapter = new GridViewAdapter(
-                getApplicationContext(),
-                items,
-                num_column
-        );
-        gridView.setAdapter(adapter);
+        Maze maze = new Maze();
+        Button up_button    = (Button)findViewById(R.id.up_button);
+        Button down_button  = (Button)findViewById(R.id.down_button);
+        Button left_button  = (Button)findViewById(R.id.left_button);
+        Button right_button = (Button)findViewById(R.id.right_button);
+        TextView turn_indicator = (TextView)findViewById(R.id.turn_indicater_textview);
+        Button hint_button  = (Button)findViewById(R.id.hint_button);
 
-        adapter.notifyDataSetChanged();
+
+        GridView gridView = (GridView)findViewById(R.id.maze_gridview);
+
+
+        OkHttpClient client = new OkHttpClient();
+        HttpUrl.Builder urlBuilder = HttpUrl.parse(server_addr + "/maze/map").newBuilder();
+        urlBuilder.addQueryParameter("name", maze_name);
+        String url = urlBuilder.build().toString();
+
+        Log.d("url", url);
+
+        Request req = new Request.Builder().url(url).build();
+
+        client.newCall(req).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                e.printStackTrace();
+            }
+
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                final String myResponse = response.body().string();
+
+                Log.d("response", myResponse);
+
+
+                Gson gson = new GsonBuilder().create();
+                final DataModels.Maze maze_data = gson.fromJson(myResponse, DataModels.Maze.class);
+
+                Log.d("maze_data", maze_data.getMaze());
+
+                maze.setData(maze_data.getMaze());
+
+                GridViewAdapter adapter = new GridViewAdapter(
+                        getApplicationContext(),
+                        maze.data,
+                        maze.size
+                );
+
+                up_button.setOnClickListener(view -> {
+                    turn_indicator.setText("Turn : " + String.valueOf(maze.Move(8)));
+                    if (maze.moved) {
+                        adapter.setCurrPos(maze.curr_state.curr_pos, 3);
+                        adapter.notifyDataSetChanged();
+                    }
+                });
+                down_button.setOnClickListener(view -> {
+                    turn_indicator.setText("Turn : " + String.valueOf(maze.Move(2)));
+                    if (maze.moved) {
+                        adapter.setCurrPos(maze.curr_state.curr_pos, 1);
+                        adapter.notifyDataSetChanged();
+                    }
+                });
+                left_button.setOnClickListener(view -> {
+                    turn_indicator.setText("Turn : " + String.valueOf(maze.Move(4)));
+                    if (maze.moved) {
+                        adapter.setCurrPos(maze.curr_state.curr_pos, 2);
+                        adapter.notifyDataSetChanged();
+                    }
+                });
+                right_button.setOnClickListener(view -> {
+                    turn_indicator.setText("Turn : " + String.valueOf(maze.Move(1)));
+                    if (maze.moved) {
+                        adapter.setCurrPos(maze.curr_state.curr_pos, 0);
+                        adapter.notifyDataSetChanged();
+                    }
+                });
+                hint_button.setOnClickListener(view -> { maze.showHint(); });
+
+                MainActivity.this.runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        gridView.setNumColumns(maze.size);
+                        gridView.setAdapter(adapter);
+
+                    }
+                });
+
+            }
+        });
     }
 }

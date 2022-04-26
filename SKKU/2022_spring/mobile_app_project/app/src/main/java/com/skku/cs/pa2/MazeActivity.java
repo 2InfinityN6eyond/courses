@@ -57,6 +57,8 @@ public class MazeActivity extends AppCompatActivity {
 
         Request req = new Request.Builder().url(url).build();
 
+        Log.d("url", url);
+
         client.newCall(req).enqueue(new Callback() {
             @Override
             public void onFailure(@NonNull Call call, @NonNull IOException e) {
@@ -66,6 +68,7 @@ public class MazeActivity extends AppCompatActivity {
             @Override
             public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
                 final String myResponse = response.body().string();
+                Log.d("response", myResponse);
                 Gson gson = new GsonBuilder().create();
                 final DataModels.Maze maze_data = gson.fromJson(myResponse, DataModels.Maze.class);
 
