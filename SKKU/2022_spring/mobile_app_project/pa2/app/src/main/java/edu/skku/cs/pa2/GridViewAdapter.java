@@ -1,18 +1,15 @@
-package com.skku.cs.pa2_unit_tester;
+package edu.skku.cs.pa2;
 
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
-import android.net.http.SslCertificate;
-import android.text.Layout;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.ImageView;
-import android.widget.TextView;
 
 import java.util.ArrayList;
 
@@ -59,7 +56,6 @@ public class GridViewAdapter extends BaseAdapter {
         hint_pos[1] = pos[1];
         plot_hint = true;
 
-        Log.d("hint_pos set", String.valueOf(hint_pos[0]) + "," + String.valueOf(hint_pos[1]));
     }
 
     @Override

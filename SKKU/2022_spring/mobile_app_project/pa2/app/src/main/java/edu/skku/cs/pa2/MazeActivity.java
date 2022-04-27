@@ -1,4 +1,4 @@
-package com.skku.cs.pa2_unit_tester;
+package edu.skku.cs.pa2;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -24,17 +24,17 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
-public class MainActivity extends AppCompatActivity {
+
+public class MazeActivity extends AppCompatActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
+        setContentView(R.layout.activity_maze);
 
-
-
-        String maze_name = "maze6";
-        String server_addr = "http://115.145.175.57:10099";
+        Intent intent = getIntent();
+        String maze_name = intent.getStringExtra("maze_name");
+        String server_addr = intent.getStringExtra("server_addr");
 
         Maze maze = new Maze();
         Button up_button    = (Button)findViewById(R.id.up_button);
@@ -70,7 +70,7 @@ public class MainActivity extends AppCompatActivity {
                 Log.d("response", myResponse);
 
                 Gson gson = new GsonBuilder().create();
-                final DataModels.Maze maze_data = gson.fromJson(myResponse, DataModels.Maze.class);
+                final DataModels.MazeData maze_data = gson.fromJson(myResponse, DataModels.MazeData.class);
 
                 Log.d("maze_data", maze_data.getMaze());
 
@@ -116,7 +116,7 @@ public class MainActivity extends AppCompatActivity {
                     adapter.notifyDataSetChanged();
                 });
 
-                MainActivity.this.runOnUiThread(new Runnable() {
+                MazeActivity.this.runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
                         gridView.setNumColumns(maze.size);
@@ -127,3 +127,62 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 }
+
+
+/*
+public class MazeActivity extends AppCompatActivity {
+
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_maze);
+
+        Intent intent = getIntent();
+        String maze_name = intent.getStringExtra("maze_name");
+        String server_addr = intent.getStringExtra("server_addr");
+
+        com.skku.cs.pa2.Maze maze = new com.skku.cs.pa2.Maze();
+        Button up_button    = (Button)findViewById(R.id.up_button);
+        Button down_button  = (Button)findViewById(R.id.down_button);
+        Button left_button  = (Button)findViewById(R.id.left_button);
+        Button right_button = (Button)findViewById(R.id.right_button);
+        Button hint_button  = (Button)findViewById(R.id.hint_button);
+        GridView gridView   = (GridView)findViewById(R.id.maze_gridview);
+
+        up_button.setOnClickListener(   view -> { maze.Move(8); });
+        down_button.setOnClickListener( view -> { maze.Move(2); });
+        left_button.setOnClickListener( view -> { maze.Move(4); });
+        right_button.setOnClickListener(view -> { maze.Move(1); });
+        hint_button.setOnClickListener( view -> { maze.showHint();      });
+
+        OkHttpClient client = new OkHttpClient();
+        HttpUrl.Builder urlBuilder = HttpUrl.parse(server_addr + "/maze/map").newBuilder();
+        urlBuilder.addQueryParameter("name", maze_name);
+        String url = urlBuilder.build().toString();
+
+        Request req = new Request.Builder().url(url).build();
+
+        Log.d("url", url);
+
+        client.newCall(req).enqueue(new Callback() {
+            @Override
+            public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                e.printStackTrace();
+            }
+
+            @Override
+            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
+                final String myResponse = response.body().string();
+                Log.d("response", myResponse);
+                Gson gson = new GsonBuilder().create();
+                final com.skku.cs.pa2.DataModels.Maze maze_data = gson.fromJson(myResponse, com.skku.cs.pa2.DataModels.Maze.class);
+
+                maze.setData(maze_data.getMaze());
+
+            }
+        });
+    }
+}
+
+ */

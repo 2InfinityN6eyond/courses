@@ -1,10 +1,8 @@
-package com.skku.cs.pa2_unit_tester;
+package edu.skku.cs.pa2;
 
 import android.util.Log;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 

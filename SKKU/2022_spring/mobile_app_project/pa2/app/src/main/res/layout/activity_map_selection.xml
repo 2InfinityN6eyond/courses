@@ -4,40 +4,37 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    tools:context=".MainActivity">
+    tools:context=".MapSelectionActivity">
 
     <TextView
-        android:id="@+id/textView"
+        android:id="@+id/username_textview"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="The\nMaze Runner"
-        android:textSize="55sp"
-        android:textStyle="bold"
-        app:layout_constraintBottom_toTopOf="@+id/name_textedit"
+        android:text="username"
+        android:textSize="30sp"
+        app:layout_constraintBottom_toTopOf="@+id/explain_textview"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="0.498"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintVertical_bias="0.461" />
+
+    <TextView
+        android:id="@+id/explain_textview"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Please Select Maze in below list"
+        android:textSize="25sp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        tools:layout_editor_absoluteY="157dp" />
 
-    <EditText
-        android:id="@+id/name_textedit"
-        android:layout_width="200dp"
-        android:layout_height="wrap_content"
-        android:ems="10"
-        android:inputType="textPersonName"
-        android:textSize="30sp"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        tools:layout_editor_absoluteY="342dp" />
-
-    <Button
-        android:id="@+id/sign_in_button"
-        android:layout_width="200dp"
-        android:layout_height="wrap_content"
-        android:text="SIGN IN"
-        android:textSize="30sp"
+    <ListView
+        android:id="@+id/maze_listview"
+        android:layout_width="350dp"
+        android:layout_height="500dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/name_textedit" />
-
+        app:layout_constraintTop_toBottomOf="@+id/explain_textview" />
 </androidx.constraintlayout.widget.ConstraintLayout>
