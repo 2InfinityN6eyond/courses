@@ -33,7 +33,7 @@ public class MainActivity extends AppCompatActivity {
 
 
 
-        String maze_name = "maze4";
+        String maze_name = "maze6";
         String server_addr = "http://115.145.175.57:10099";
 
         Maze maze = new Maze();
@@ -68,7 +68,6 @@ public class MainActivity extends AppCompatActivity {
                 final String myResponse = response.body().string();
 
                 Log.d("response", myResponse);
-
 
                 Gson gson = new GsonBuilder().create();
                 final DataModels.Maze maze_data = gson.fromJson(myResponse, DataModels.Maze.class);
@@ -111,7 +110,10 @@ public class MainActivity extends AppCompatActivity {
                         adapter.notifyDataSetChanged();
                     }
                 });
-                hint_button.setOnClickListener(view -> { maze.showHint(); });
+                hint_button.setOnClickListener(view -> {
+                    State target = maze.showHint();
+                    Log.d("hint", String.valueOf(target.curr_pos[0] + "," + String.valueOf(target.curr_pos[1])));
+                });
 
                 MainActivity.this.runOnUiThread(new Runnable() {
                     @Override

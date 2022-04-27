@@ -4,8 +4,11 @@ import android.util.Log;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
 
-class State {
+class State implements Comparable<State> {
     public int[] curr_pos;
     public int[] prev_pos;
 
@@ -18,6 +21,27 @@ class State {
         this.prev_pos = new int[]{prev_pos[0], prev_pos[1]};
         this.f = f;
         this.g = g;
+    }
+
+    @Override
+    public int compareTo(State state) {
+        return (this.f + this.g) - (state.f + state.g);
+    }
+}
+
+class StateComparator implements Comparator<State> {
+    @Override
+    public int compare(State state, State t1) {
+        int h1 = state.f + state.g;
+        int h2 = t1.f + t1.g;
+
+        if (h1 > h2) {
+            return 1;
+        } else if (h1 < h2) {
+            return -1;
+        } else {
+            return 0;
+        }
     }
 }
 
@@ -53,17 +77,17 @@ public class Maze {
         }
     }
 
-    void showHint() {
+    public State showHint() {
         if (!hint_used) {
-            Log.d("show", "hint");
-
-            hint_used = true;
+            //hint_used = true;
+            return findHint(curr_state);
         }
+        return new State(new int[]{-1, -1}, new int[]{-1, -1}, 0, 0);
     }
 
     int Move(int direction) {
-        if (isMovable(direction)) {
-            State new_stete = getNewState(direction);
+        if (isMovable(curr_state, direction)) {
+            State new_stete = getNewState(curr_state, direction);
 
             curr_state = new_stete;
             turn_count += 1;
@@ -74,7 +98,7 @@ public class Maze {
         return turn_count;
     }
 
-    boolean isMovable(int direction) {
+    boolean isMovable(State curr_state, int direction) {
         int val = data.get(curr_state.curr_pos[0]).get(curr_state.curr_pos[1]);
         for (int i = 3; i >= 0; i--) {
             if (direction == Math.pow(2, i) * (val / (int)Math.pow(2, i))) {
@@ -85,7 +109,119 @@ public class Maze {
         return true;
     }
 
-    State getNewState(int direction) {
+    private boolean isVisited(ArrayList<State> visited, State node) {
+        for (int i = 0; i < visited.size(); i++) {
+            if (visited.get(i).curr_pos == node.curr_pos) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public State findHint(State curr_state) {
+        ArrayList<State> visited = new ArrayList<>();
+        ArrayList<State> not_visited = new ArrayList<>();
+        not_visited.add(new State(
+                new int[]{curr_state.curr_pos[0], curr_state.curr_pos[1]},
+                new int[]{curr_state.curr_pos[0], curr_state.curr_pos[1]},
+                0,
+                2 * (size - 1) - curr_state.prev_pos[0] - curr_state.curr_pos[1]
+        ));
+
+        Log.d(
+                "start state:" + String.valueOf(curr_state.curr_pos[0]) + "," + String.valueOf(curr_state.curr_pos[1]),
+                ""
+        );
+
+        int idx = 0;
+        while (true) {
+            Collections.sort(not_visited);
+
+            if (not_visited.isEmpty()) {
+                break;
+            }
+
+            State node = not_visited.remove(0);
+            visited.add(node);
+
+            if (node.curr_pos[0] == size - 1 && node.curr_pos[1] == size - 1) {
+                break;
+            }
+
+            Log.d(
+                    "idx:" + String.valueOf(idx),
+                    "Searching node " + String.valueOf(node.curr_pos[0]) + "," + String.valueOf(node.curr_pos[1])
+            );
+
+            for (int i = 0; i <= 3; i++) {
+                int direction = (int) Math.pow(2, i);
+
+                if (isMovable(node, direction)) {
+                    State new_state = getNewState(node, direction);
+
+                    if (!isVisited(visited, new_state)) {
+                        Log.d("add to non_visited",
+                                String.valueOf(new_state.curr_pos[0]) + "," +
+                                        String.valueOf(new_state.curr_pos[1])
+                        );
+                    }
+
+                }
+
+            }
+
+        }
+            /*
+            for (int i = 0; i <= 3; i++) {
+                int direction = (int)Math.pow(2, i);
+                if (isMovable(node, direction)) {
+                    for (int j = 0; j < visited.size(); j++) {
+                        State candidate = getNewState(curr_state, direction);
+                        if (visited.get(j).curr_pos != candidate.curr_pos) {
+                            not_visited.add(candidate);
+                            Log.d(
+                                    "adding to not_visited",
+                                    String.valueOf(candidate.curr_pos[0]) + "," +
+                                            String.valueOf(candidate.curr_pos[1]) +
+                                            " direction:" + String.valueOf(direction) +
+                                            " i:" + String.valueOf(i)
+
+                            );
+                        }
+                    }
+                }
+            }
+            idx += 1;
+        }
+
+        // now path is in visited
+        State curr = new State(new int[]{-1, -1}, new int[]{-1, -1}, 1, 1);
+        int[] goal_pos = new int[] {size -1, size - 1};
+        for (int i = 0; i < visited.size(); i++) {
+            if (visited.get(i).curr_pos == goal_pos) {
+                curr = visited.get(i);
+                break;
+            }
+        }
+        while (curr.prev_pos != curr_state.curr_pos) {
+            for (int i = 0; i < visited.size(); i++) {
+                if (visited.get(i).curr_pos == curr.prev_pos) {
+                    curr = visited.get(i);
+                }
+            }
+        }
+        return curr;
+
+             */
+        return new State(
+                new int[]{4, 4},
+                new int[]{4, 4},
+                0,
+                0
+        );
+    }
+
+    State getNewState(State curr_state, int direction) {
         State new_tate = curr_state;
         if (direction == 1) { // move right
             new_tate = new State(
