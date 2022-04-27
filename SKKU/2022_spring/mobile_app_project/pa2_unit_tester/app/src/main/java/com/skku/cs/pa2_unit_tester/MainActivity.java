@@ -120,10 +120,8 @@ public class MainActivity extends AppCompatActivity {
                     public void run() {
                         gridView.setNumColumns(maze.size);
                         gridView.setAdapter(adapter);
-
                     }
                 });
-
             }
         });
     }

@@ -110,11 +110,18 @@ public class Maze {
     }
 
     private boolean isVisited(ArrayList<State> visited, State node) {
+        //Log.d("comparing..........",
+        //        String.valueOf(node.curr_pos[0]) + "," + String.valueOf(node.curr_pos[1]));
         for (int i = 0; i < visited.size(); i++) {
-            if (visited.get(i).curr_pos == node.curr_pos) {
+            if (
+                    visited.get(i).curr_pos[0] == node.curr_pos[0]
+                    && visited.get(i).curr_pos[1] == node.curr_pos[1]
+            ) {
+                //Log.d("has boon visited", "");
                 return true;
             }
         }
+        //Log.d("not visited yet", "");
         return false;
     }
 
@@ -127,19 +134,11 @@ public class Maze {
                 0,
                 2 * (size - 1) - curr_state.prev_pos[0] - curr_state.curr_pos[1]
         ));
-
-        Log.d(
-                "start state:" + String.valueOf(curr_state.curr_pos[0]) + "," + String.valueOf(curr_state.curr_pos[1]),
-                ""
-        );
-
-        int idx = 0;
         while (true) {
-            Collections.sort(not_visited);
-
             if (not_visited.isEmpty()) {
                 break;
             }
+            Collections.sort(not_visited);
 
             State node = not_visited.remove(0);
             visited.add(node);
@@ -147,12 +146,6 @@ public class Maze {
             if (node.curr_pos[0] == size - 1 && node.curr_pos[1] == size - 1) {
                 break;
             }
-
-            Log.d(
-                    "idx:" + String.valueOf(idx),
-                    "Searching node " + String.valueOf(node.curr_pos[0]) + "," + String.valueOf(node.curr_pos[1])
-            );
-
             for (int i = 0; i <= 3; i++) {
                 int direction = (int) Math.pow(2, i);
 
@@ -160,65 +153,77 @@ public class Maze {
                     State new_state = getNewState(node, direction);
 
                     if (!isVisited(visited, new_state)) {
-                        Log.d("add to non_visited",
-                                String.valueOf(new_state.curr_pos[0]) + "," +
-                                        String.valueOf(new_state.curr_pos[1])
-                        );
+                        not_visited.add(new_state);
                     }
-
                 }
-
             }
-
         }
-            /*
-            for (int i = 0; i <= 3; i++) {
-                int direction = (int)Math.pow(2, i);
-                if (isMovable(node, direction)) {
-                    for (int j = 0; j < visited.size(); j++) {
-                        State candidate = getNewState(curr_state, direction);
-                        if (visited.get(j).curr_pos != candidate.curr_pos) {
-                            not_visited.add(candidate);
-                            Log.d(
-                                    "adding to not_visited",
-                                    String.valueOf(candidate.curr_pos[0]) + "," +
-                                            String.valueOf(candidate.curr_pos[1]) +
-                                            " direction:" + String.valueOf(direction) +
-                                            " i:" + String.valueOf(i)
 
-                            );
-                        }
-                    }
-                }
-            }
-            idx += 1;
+        Log.d("=================", "visited:");
+        for (int i = 0; i < visited.size(); i++) {
+            State n = visited.get(i);
+            Log.d(
+                    "(" + String.valueOf(n.curr_pos[0]) + "," + String.valueOf(n.curr_pos[1]) + ")",
+                    "(" + String.valueOf(n.prev_pos[0]) + "," + String.valueOf(n.prev_pos[1]) + ")"
+            );
         }
 
         // now path is in visited
         State curr = new State(new int[]{-1, -1}, new int[]{-1, -1}, 1, 1);
-        int[] goal_pos = new int[] {size -1, size - 1};
+
+
+        Log.d("--------------------------------------", "-----------");
         for (int i = 0; i < visited.size(); i++) {
-            if (visited.get(i).curr_pos == goal_pos) {
-                curr = visited.get(i);
+            State node_ = visited.get(i);
+            if (
+                    node_.curr_pos[0] == size - 1
+                    && node_.curr_pos[1] == size - 1
+            ) {
+                curr = node_;
+                Log.d(
+                        "found goal state",
+                        String.valueOf(curr.curr_pos[0]) + "," + String.valueOf(curr.curr_pos[1]));
                 break;
             }
         }
-        while (curr.prev_pos != curr_state.curr_pos) {
-            for (int i = 0; i < visited.size(); i++) {
-                if (visited.get(i).curr_pos == curr.prev_pos) {
-                    curr = visited.get(i);
+
+        for (int i = 0; i < size * size; i++) {
+            if (
+                    curr.curr_pos[0] == curr_state.curr_pos[0]
+                    && curr.curr_pos[1] == curr_state.curr_pos[1]
+            ) {
+                break;
+            }
+
+            for (int j = 0; j < visited.size(); j++) {
+                State node_ = visited.get(j);
+                if (
+                        node_.curr_pos[0] == curr.prev_pos[0]
+                        && node_.curr_pos[1] == curr.prev_pos[1]
+                ) {
+                    Log.d(
+                            "=======",
+                            "(" + String.valueOf(curr.curr_pos[0])
+                            + "," + String.valueOf((curr.curr_pos[1])) + ")"
+                            + "->" + "(" + String.valueOf(node_.curr_pos[0])
+                                    + "," + String.valueOf((node_.curr_pos[1])) + ")"
+                    );
+                    curr = node_;
+
+                    Log.d("new curr",
+                            "(" + String.valueOf(curr.curr_pos[0]) + "," +
+                            String.valueOf(curr.curr_pos[1]));
+
+                    continue;
                 }
             }
         }
+
+        Log.d("target",
+                String.valueOf(curr.curr_pos[0]) + "," + String.valueOf(curr.curr_pos[1]));
+
         return curr;
 
-             */
-        return new State(
-                new int[]{4, 4},
-                new int[]{4, 4},
-                0,
-                0
-        );
     }
 
     State getNewState(State curr_state, int direction) {

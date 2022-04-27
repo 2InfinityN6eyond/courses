@@ -16,7 +16,6 @@ import android.widget.TextView;
 
 import java.util.ArrayList;
 
-
 public class GridViewAdapter extends BaseAdapter {
     Context mContext;
     LayoutInflater mLayoutInflater;
