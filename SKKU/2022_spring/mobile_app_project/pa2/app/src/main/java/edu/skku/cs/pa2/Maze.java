@@ -44,6 +44,13 @@ public class Maze {
         moved = false;
     }
 
+    public boolean isFinished() {
+        return (
+                curr_state.curr_pos[0] == size - 1
+                && curr_state.curr_pos[1] == size - 1
+        );
+    }
+
     public void setData(String data_) {
         String[] rows = data_.split("\n");
 
