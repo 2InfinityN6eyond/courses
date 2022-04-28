@@ -27,22 +27,6 @@ class State implements Comparable<State> {
     }
 }
 
-class StateComparator implements Comparator<State> {
-    @Override
-    public int compare(State state, State t1) {
-        int h1 = state.f + state.g;
-        int h2 = t1.f + t1.g;
-
-        if (h1 > h2) {
-            return 1;
-        } else if (h1 < h2) {
-            return -1;
-        } else {
-            return 0;
-        }
-    }
-}
-
 public class Maze {
 
     public int size;
@@ -77,7 +61,7 @@ public class Maze {
 
     public State showHint() {
         if (!hint_used) {
-            //hint_used = true;
+            hint_used = true;
             return findHint(curr_state);
         }
         return new State(new int[]{-1, -1}, new int[]{-1, -1}, 0, 0);
