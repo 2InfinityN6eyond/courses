@@ -46,15 +46,17 @@ public class MainActivity extends AppCompatActivity {
             Gson gson = new Gson();
             String json = gson.toJson(data, DataModel.class);
 
-            HttpUrl.Builder urlBuilder = HttpUrl.parse("http://www.omdbapi.com/").newBuilder();
-            //urlBuilder.addQueryParameter("page", "2");
-            urlBuilder.addQueryParameter("apikey", ap i_key);
+            HttpUrl.Builder urlBuilder = HttpUrl.parse("https://06k827sss1.execute-api.us-east-2.amazonaws.com/default/jjapOmdbApi").newBuilder();
+            //HttpUrl.Builder urlBuilder = HttpUrl.parse("http://www.omdbapi.com/").newBuilder();
+            //urlBuilder.addQueryParameter("apikey", api_key);
             urlBuilder.addQueryParameter("t", editText.getText().toString());
+            //urlBuilder.addQueryParameter("t", "spider man no way home");
 
             Log.d("movie name", editText.getText().toString());
 
             String url = urlBuilder.build().toString();
 
+            Log.d("url", url);
 
             Request req = new Request.Builder()
                     .url(url)
@@ -71,22 +73,14 @@ public class MainActivity extends AppCompatActivity {
                                        @NonNull Response response) throws IOException {
                     final String myResponse = response.body().string();
 
+                    Log.d("response", myResponse);
+
                     Gson gson = new GsonBuilder().create();
                     final DataModel data1 = gson.fromJson(myResponse, DataModel.class);
 
                     MainActivity.this.runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-
-                            Log.d("response",                                     "Title : " + data1.getTitle() +
-                                    "\nYear : " + data1.getYear() +
-                                    "\nReleased Date : " + data1.getReleased() +
-                                    "\nRuntime : " + data1.getRuntime() +
-                                    "\nDirector : " + data1.getDirector() +
-                                    "\nGenre : " + data1.getGenre() +
-                                    "\niMDB Rates : " + data1.getImdbRating() +
-                                    "\nMetascore : " + data1.getMetascore());
-
                             textView.setText(
                                     "Title : " + data1.getTitle() +
                                     "\nYear : " + data1.getYear() +
