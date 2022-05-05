@@ -4,17 +4,42 @@
 
 #include "register_set.hpp"
 
-RegisterSetGetterProxy::RegisterSetGetterProxy(
+
+RegisterSet::RegisterSet() : reg_write(false) {
+    for (int i = 0; i < len; i++) {
+        data[i] = 0;
+    }
+}
+
+void RegisterSet::setRegWrite(bool RegWrite) { reg_write = RegWrite; }
+
+uint32_t RegisterSet::read(int idx) {
+    if (idx < 0 || idx > 32) {
+        return NULL;
+    } else {
+        return data[idx];
+    }
+}
+
+void RegisterSet::write(int idx, uint32_t val) {
+    if (reg_write) {
+        data[idx] = val;
+    }
+}
+
+
+
+/*
+RegisterSetSetterProxy::RegisterSetSetterProxy(
     RegisterSet register_set_,
     int idx_
 ) : register_set(register_set_), idx(idx_) {}
     
-RegisterSetGetterProxy& RegisterSetGetterProxy::operator=(uint32_t value) {
+RegisterSetSetterProxy& RegisterSetSetterProxy::operator=(uint32_t value) {
     if (register_set.RegWrite)
         register_set.registers[idx] = value;
     return *this;
 }
-
 
 
 RegisterSet::RegisterSet() {
@@ -30,33 +55,34 @@ uint32_t RegisterSet::operator[](int idx) const {
     }
 }
 
-RegisterSetGetterProxy RegisterSet::operator[](int idx) {
-    return RegisterSetGetterProxy(*this, idx);
+RegisterSetSetterProxy RegisterSet::operator[](int idx) {
+    return RegisterSetSetterProxy(*this, idx);
 }
 
 int main() {
     RegisterSet register_set{};
-    for (int i = 0; i < 32; i ++) {
+    for (int i = 0; i < 32; i++) {
         register_set[i] = i + 1;
     }
     for (int i = 0; i < 32; i++) {
         std::cout << register_set.registers[i] << " ";
     }
 }
+*/
 
 /*
-class RegisterSetGetterProxy {
+class RegisterSetSetterProxy {
     public:
 
     RegisterSet& register_set;
     int idx;
 
-    RegisterSetGetterProxy(
+    RegisterSetSetterProxy(
         RegisterSet register_set_,
         int idx_
     ) : register_set(register_set_), idx(idx_) {}
 
-    RegisterSetGetterProxy & operator=(uint32_t value) {
+    RegisterSetSetterProxy & operator=(uint32_t value) {
         if (register_set.RegWrite)
             register_set.registers[idx] = value;
         return *this;
@@ -90,8 +116,8 @@ class RegisterSet {
         }
     }
 
-    RegisterSetGetterProxy operator[](int idx) {
-        return RegisterSetGetterProxy(*this, idx);
+    RegisterSetSetterProxy operator[](int idx) {
+        return RegisterSetSetterProxy(*this, idx);
     }
 };
 */

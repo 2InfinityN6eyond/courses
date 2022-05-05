@@ -2,16 +2,33 @@
 #include <strings.h>
 #include <iostream>
 
+class RegisterSet {
+    protected:
+
+    bool reg_write;
+    uint32_t data[33];
+
+    public:
+
+    RegisterSet();
+    void setRegWrite(bool RegWrite);
+    uint32_t read(int idx);
+    void write(int idx, uint32_t val);
+
+}
+
+
+/*
 class RegisterSet;
 
-class RegisterSetGetterProxy {
+class RegisterSetSetterProxy {
     public:
 
     RegisterSet& register_set;
     int idx;
     
-    RegisterSetGetterProxy(RegisterSet register_set_, int idx_);
-    RegisterSetGetterProxy & operator=(uint32_t value);
+    RegisterSetSetterProxy(RegisterSet register_set_, int idx_);
+    RegisterSetSetterProxy & operator=(uint32_t value);
 };
 
 class RegisterSet {
@@ -30,5 +47,6 @@ class RegisterSet {
     // overload bracket operater as getter and setter
     // setter set register $idx only if this->RegWrite == true
     uint32_t operator[](int idx) const;   
-    RegisterSetGetterProxy operator[](int idx);
+    RegisterSetSetterProxy operator[](int idx);
 };
+*/
