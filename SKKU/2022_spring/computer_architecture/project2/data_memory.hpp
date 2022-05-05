@@ -6,6 +6,6 @@
 class DataMemory : public Memory {
     public:
     DataMemory();
-}
+};
 
 #endif

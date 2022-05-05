@@ -6,6 +6,6 @@
 class InstMemory : public Memory {
     public:
     InstMemory();
-}
+};
 
 #endif
