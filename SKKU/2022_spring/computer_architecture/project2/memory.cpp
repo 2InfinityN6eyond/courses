@@ -77,7 +77,7 @@ int Memory::writeBytes(uint32_t idx, uint32_t size, uint8_t *data) {
 
 int Memory::readWord(uint32_t idx, uint32_t *data) {
     int inner_idx = idx - outer_addr_ofst;
-    printf("outer_off:%d, inner_idx:%d\n", outer_addr_ofst, inner_idx);
+    //printf("outer_off:%d, inner_idx:%d\n", outer_addr_ofst, inner_idx);
     if (inner_idx < 0 || inner_idx + 4 >= addr_space_size) {
         return 0;
     }
