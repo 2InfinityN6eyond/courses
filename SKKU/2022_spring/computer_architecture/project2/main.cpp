@@ -31,15 +31,15 @@ int main(int argc, char **argv) {
     if (inst_fd == -1) {
         std::cerr << "inst file open failed" << std::endl;
         return -1;
-    }    
+    }
     Parser inst_parser(inst_fd);
     std::vector<uint8_t> inst_buf;
-    inst_parser.readFile(inst_buf);
+    int inst_file_len = inst_parser.readFile(inst_buf);
     inst_memory.setDataBuffer(inst_buf);
 
     printf("inst read...\n");
 
-    //inst_memory.printMemory(100);
+    inst_memory.printMemory(inst_file_len);
 
     if (argc > 3) { // read data file
         int data_fd = open(argv[3], O_RDONLY);
@@ -49,11 +49,11 @@ int main(int argc, char **argv) {
         }
         Parser data_parser(data_fd);
         std::vector<uint8_t> data_buf;
-        data_parser.readFile(data_buf);
+        int data_file_len = data_parser.readFile(data_buf);
         data_memory.setDataBuffer(data_buf);
 
         printf("data read...\n");
-        //data_memory.printMemory(100);
+        data_memory.printMemory(data_file_len);
     }
 
 

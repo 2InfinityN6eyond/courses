@@ -1,4 +1,14 @@
+
+#include <stdio.h>
+#include <iostream>
+#include <unistd.h>
+#include <fcntl.h>
+#include <vector>
+#include <stdlib.h>
+#include <string.h>
+#include <algorithm>
 #include <stdint.h>
+
 #include "definitions.hpp"
 
 class Disassembler {
@@ -240,4 +250,4 @@ public:
                 break;
             
         }
-    }
+    };

@@ -30,3 +30,8 @@ int MipsSim::step() {
 
     // fetch instruction and get rs rt rd
 }
+
+
+void MipsSim::printInstruction(int dix) {
+    
+}

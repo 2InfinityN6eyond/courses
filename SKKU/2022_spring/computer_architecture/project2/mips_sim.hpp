@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 
+#include "definitions.hpp"
 #include "register_set.hpp"
 #include "inst_memory.hpp"
 #include "data_memory.hpp"
@@ -18,9 +19,15 @@ class MipsSim {
     int run();
     int step();
 
+
+    void decomposeInst();
+
     int getPc(uint32_t *pc);
     int getOpcode(uint32_t *opcode);
     int getNewPC(uint32_t *new_pc);
+
+
+    void printInstruction(int idx);
 
     private:
     int  n_insts;
@@ -28,6 +35,7 @@ class MipsSim {
     InstMemory  inst_memory;
     DataMemory  data_memory;
 
+    uint32_t curr_instr;
     uint32_t RS, RD, RT;
     uint32_t immediate;
     uint32_t jump_addr;
