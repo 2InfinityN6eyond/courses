@@ -12,10 +12,10 @@ RegisterSet::RegisterSet() {
 }
 
 RegisterSet::~RegisterSet() {
-    delete[] _data;
+    //delete[] _data;
 }
 
-RegisterSet::read(uint32_t idx, uint32_t *data) {
+int RegisterSet::read(uint32_t idx, uint32_t *data) {
     if (idx < 0 || idx >= NUM_REGISTERS) {
         std::cerr << "invalid register access. tried to access register $" << idx << std::endl;
         return 0;
@@ -24,7 +24,7 @@ RegisterSet::read(uint32_t idx, uint32_t *data) {
     return 1;
 }
 
-RegisterSet::write(uint32_t idx, uint32_t *data) {
+int RegisterSet::write(uint32_t idx, uint32_t *data) {
     if (idx < 0 || idx >= NUM_REGISTERS) {
         std::cerr << "invalid register access. tried to access register $" << idx << std::endl;
         return 0;

@@ -6,11 +6,21 @@
 #include <stdint.h>
 
 class Parser {
-  public:
+    public:
     int fd;
 
-    Parser(int fd);
-    int read4Bytes(std::vector<uint8_t> buf);
+    Parser(
+        int fd,
+        bool computer_is_little_endian = true
+    );
+
+    int readWord(std::vector<uint8_t> &buf);
+    int parseInstFile(std::vector<uint32_t> &insts);
+    int readFile(std::vector<uint8_t> &buf);
+
+    private:
+    bool computer_is_little_endian;
+
 };
 
 #endif
