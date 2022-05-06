@@ -72,8 +72,8 @@ int main(int argc, char **argv) {
         data_memory
     );
 
-    for (int i = 0; i < inst_file_len; i++) {
-        mips_sim.decode(i);
+    for (int i = 0; i < inst_file_len / 4; i++) {
+        mips_sim.decode(i * 4);
     }
 
 }

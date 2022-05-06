@@ -13,6 +13,8 @@ MipsSim::MipsSim(
     printf("simulator constructed");
 
     register_set = RegisterSet{};
+
+
 }
 
 // : register_set(register_set), inst_memory(inst_memory), data_memory(data_memory) {
@@ -34,4 +36,17 @@ int MipsSim::step() {
 
 void MipsSim::printInstruction(int dix) {
     
+}
+
+
+void MipsSim::printState() {
+    // print register
+    
+
+    // print instruction memory
+
+
+    // print data memeory
+
+
 }
