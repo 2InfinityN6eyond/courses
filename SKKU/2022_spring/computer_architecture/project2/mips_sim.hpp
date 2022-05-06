@@ -19,13 +19,13 @@ class MipsSim {
     );
 
 
-    Disassembler disassembler;
+    Disassembler ddd(18);
 
 
     void decode(int idx) {
 
-        inst_memory.readWord(idx, &(disassembler.instruction));
-        disassembler.disassemble();
+        inst_memory.readWord(idx, &(ddd.instruction));
+        ddd.disassemble();
     }
 
     int run();
