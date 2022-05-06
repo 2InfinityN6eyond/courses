@@ -8,6 +8,8 @@
 #include "inst_memory.hpp"
 #include "data_memory.hpp"
 
+#include "decoder.hpp"
+
 class MipsSim {
     public:
     MipsSim(
@@ -16,9 +18,18 @@ class MipsSim {
         DataMemory  data_memory
     );
 
+
+    Disassembler disassembler;
+
+
+    void decode(int idx) {
+
+        inst_memory.readWord(idx, &(disassembler.instruction));
+        disassembler.disassemble();
+    }
+
     int run();
     int step();
-
 
     void decomposeInst();
 
@@ -26,8 +37,10 @@ class MipsSim {
     int getOpcode(uint32_t *opcode);
     int getNewPC(uint32_t *new_pc);
 
-
     void printInstruction(int idx);
+
+
+    void printState();
 
     private:
     int  n_insts;
@@ -42,6 +55,5 @@ class MipsSim {
     uint32_t brch_addr;
     uint32_t new_addr; 
 };
-
 
 #endif

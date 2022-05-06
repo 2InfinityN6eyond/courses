@@ -11,18 +11,20 @@
 
 #include "definitions.hpp"
 
+
 class Disassembler {
 public:
+    int idx;
     uint32_t instruction;
     char *buf;
 
-    Disassembler() {}
+    Disassembler() { idx = 0; }
     
     void fromBuffer(char *buffer, bool is_little_endian = true) {
         buf = buffer;
         int offset = is_little_endian ? 1 : -1;
         instruction = 0;
-        for (int i = (int)(1.5-1.5*offset); 0<=i && i<=3; i+=offset) {
+        for (int i = (int)(1.5-1.5*offset); 0<=i&&i<=3; i+=offset) {
            instruction *= 256;
            instruction += (uint8_t)buffer[i];
         } 
@@ -34,7 +36,7 @@ public:
     uint32_t _getRD()        { return (instruction & 0xf800)    >> 11; }
     uint32_t _getShamt()     { return (instruction & 0x7c0)     >> 6;}
     uint32_t _getFuncCode()  { return instruction & 63; }
-    uint16_t _getImmediate() { return instruction & 65535; }
+    int16_t _getImmediate() { return instruction & 65535; }
     uint32_t _getAddress()   { return instruction & 67108863; }
 
 
@@ -250,4 +252,46 @@ public:
                 break;
             
         }
-    };
+    }
+
+    void _disassembleJtype() {
+        switch (_getOpCode())
+        {
+            case J    :
+                printToLower("J  "); break;
+            case JAL  :
+                printToLower("JAL"); break;
+        
+            default:
+                break;
+        }
+        std::cout << " " << _getAddress() << std::endl;        
+    }
+
+    void printBuffer() {
+        for (int i = 0; i < 4; i++) {
+            unsigned char c = (unsigned char)buf[i];
+            printf("%c", c / 16 > 9 ? c / 16 - 10 + 'a' : c / 16 + '0');
+            printf("%c", c % 16 > 9 ? c % 16 - 10 + 'a' : c % 16 + '0');
+        }
+    }
+    
+    void disassemble() {
+        std::cout << "inst " << idx++ << ": ";
+        printBuffer();
+        printf(" ");
+        switch (_getOpCode()) {
+            case R_OPS :
+                _disassembleRtype();
+                break;
+            case J :
+                _disassembleJtype();
+                break;
+            case JAL :
+                _disassembleJtype();
+                break;
+            default :
+                _disassembleItype();
+        }
+    }
+};

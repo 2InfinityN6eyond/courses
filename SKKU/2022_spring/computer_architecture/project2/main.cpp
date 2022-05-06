@@ -39,7 +39,8 @@ int main(int argc, char **argv) {
 
     printf("inst read...\n");
 
-    inst_memory.printMemory(inst_file_len);
+    inst_memory.printMemory(100);
+    //inst_memory.printMemory(inst_file_len);
 
     if (argc > 3) { // read data file
         int data_fd = open(argv[3], O_RDONLY);
@@ -53,7 +54,8 @@ int main(int argc, char **argv) {
         data_memory.setDataBuffer(data_buf);
 
         printf("data read...\n");
-        data_memory.printMemory(data_file_len);
+        data_memory.printMemory(100);
+        //data_memory.printMemory(data_file_len);
     }
 
 
@@ -62,11 +64,16 @@ int main(int argc, char **argv) {
     printf("\n%d  %x\n", data_memory.readWord(1 + 0x10000000, &val), val);
 
     printf("initializing simulator...\n");
-    MipsSim(
+
+    MipsSim mips_sim(
         n_insts,
         //register_set,
         inst_memory,
         data_memory
     );
+
+    for (int i = 0; i < inst_file_len; i++) {
+        mips_sim.decode(i);
+    }
 
 }

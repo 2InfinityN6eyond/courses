@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdio.h>
 
 #include "memory.hpp"
 
@@ -35,7 +36,7 @@ void Memory::printMemory(int num) {
     printf("\n");
 }
 
-int Memory::setDataBuffer(std::vector<u_int8_t> &buf) {
+int Memory::setDataBuffer(std::vector<uint8_t> &buf) {
     if (buf.size() > _data.size()) {
         return 0;
     }
