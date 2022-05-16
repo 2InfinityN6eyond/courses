@@ -1,0 +1,27 @@
+find ../../  -readable -exec ./grep -E  "*include*" --color=always {} \;
+./grep   -r -A -B 5 -n -w -H -i -v -E --color=always "*.*" ../../    # 2064
+ ./grep   -c -r -n -w -H -i  --color=always "*.*" ../../
+./grep -V aslas
+./grep -E "*include*" --color=always ../../
+./grep --help ase
+./grep $ ../../
+ ./grep -c -r -n -w -H -i --color=always "(^\+?)(31)(\s?)(0?)([0-9]{1,3})(\s?)([0-9]{6,8}$)" -E ../../
+./grep -a -e "^[[:print:]]" --regexp="^[[:alpha:]]"  ../../
+./grep -E -i --no-ignore-case -b "[a-z]*[a-z]" -L -m 4000 ../../
+./grep -E -i "[a-z]*[a-z]" -L -m 4000 -o --exclude=in ../../
+./grep -c -r -n -w -H -F -A -B --color=always "=" ../../
+./grep -C -r -F "opt" ../../
+./grep   -c -r -n -w -H -i -F --color=always "*.*" ../../
+./grep   -c -r -n -w -H -i --color=always "*.*" ../../
+./grep   -c -r -n -w -H -i -P -P -P --color=always "[a-zA-Z0-9]" ../../
+./grep   -P -P --color=always "[a-zA-Z0-9]" ../../
+./grep   -c -r -n -w -H -i -P --color=always "*if*" ../../
+ ./grep   -c -r -n -w -H -i  --color=always "[a-z].*[a-z" ../../
+ ./grep   -c -r -n -w -H -i  --color=always "[a-z].*[a-z]" ../../
+./grep -w -Es "{*" -v ../../
+
+./grep "*include" ../../
+./grep "#*" -P -v ../../
+./grep -e "^\w.*[(]" ../../
+#  lcov --rc lcov_branch_coverage=1 --capture --directory ../grep-3.7 -o my.info
+#  genhtml my.info --rc lcov_branch_coverage=1 --o results --legend
