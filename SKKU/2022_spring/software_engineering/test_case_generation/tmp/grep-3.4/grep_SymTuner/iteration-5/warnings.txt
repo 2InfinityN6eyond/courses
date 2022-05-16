@@ -1,0 +1,22 @@
+KLEE: WARNING: undefined reference to function: __ctype_get_mb_cur_max
+KLEE: WARNING: undefined reference to function: fdopendir
+KLEE: WARNING: undefined reference to function: pcre_assign_jit_stack
+KLEE: WARNING: undefined reference to function: pcre_compile
+KLEE: WARNING: undefined reference to function: pcre_exec
+KLEE: WARNING: undefined reference to function: pcre_fullinfo
+KLEE: WARNING: undefined reference to function: pcre_jit_stack_alloc
+KLEE: WARNING: undefined reference to function: pcre_jit_stack_free
+KLEE: WARNING: undefined reference to function: pcre_maketables
+KLEE: WARNING: undefined reference to function: pcre_study
+KLEE: WARNING: undefined reference to function: sigaltstack
+KLEE: WARNING: undefined reference to function: splice
+KLEE: WARNING: executable has module level assembly (ignoring)
+KLEE: WARNING ONCE: calling external: syscall(16, 0, 21505, 94327173035504) at /opt/klee-src/runtime/POSIX/fd.c:980 10
+KLEE: WARNING ONCE: calling __user_main with extra arguments.
+KLEE: WARNING ONCE: Alignment of memory from call "malloc" is not modelled. Using alignment of 8.
+KLEE: WARNING ONCE: Alignment of memory from call "calloc" is not modelled. Using alignment of 8.
+KLEE: WARNING ONCE: calling external: __ctype_get_mb_cur_max() at ../../lib/localeinfo.c:91 38
+KLEE: WARNING ONCE: Alignment of memory from call "realloc" is not modelled. Using alignment of 8.
+KLEE: WARNING ONCE: calling external: sigaltstack(94327173171904, 0) at ../../lib/c-stack.c:286 7
+KLEE: WARNING ONCE: sigaction: silently ignoring
+KLEE: WARNING ONCE: calling clean_up_stdout with extra arguments.

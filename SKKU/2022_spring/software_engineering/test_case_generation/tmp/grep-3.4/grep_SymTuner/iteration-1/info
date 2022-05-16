@@ -1,0 +1,16 @@
+klee -output-module=false -output-source=false -output-stats=false -use-batching-search -posix-runtime -only-output-states-covering-new -watchdog -allow-seed-extension -allow-seed-truncation -ignore-solver-failures -libc=uclibc -disable-inlining -simplify-sym-indices=false -use-forked-solver=true -use-cex-cache=false -max-memory-inhibit=true -optimize=false -max-memory=1000 -max-sym-array-size=3500 -max-instruction-time=40 -max-static-fork-pct=1 -max-static-solve-pct=2 -max-static-cpfork-pct=0.25 -batch-instructions=14000 -seed-file=/workspaces/grep_SymTuner/iteration-0/test000003.ktest -search=nurs:icnt -switch-type=simple -external-calls=concrete -max-time=30 -output-dir=/workspaces/grep_SymTuner/iteration-1 /workspaces/grep-3.4/obj-llvm/src/grep.bc -sym-arg 5 -sym-arg 5 -sym-arg 3 -sym-files 1 20 -sym-stdin 4 -sym-stdout
+PID: 787
+Using monotonic steady clock with 1/1000000000s resolution
+Started: 2022-05-07 11:24:31
+Finished: 2022-05-07 11:25:12
+Elapsed: 00:00:41
+KLEE: done: explored paths = 57
+KLEE: done: avg. constructs per query = 113
+KLEE: done: total queries = 1883
+KLEE: done: valid queries = 298
+KLEE: done: invalid queries = 1585
+KLEE: done: query cex = 1883
+
+KLEE: done: total instructions = 1548130
+KLEE: done: completed paths = 57
+KLEE: done: generated tests = 25

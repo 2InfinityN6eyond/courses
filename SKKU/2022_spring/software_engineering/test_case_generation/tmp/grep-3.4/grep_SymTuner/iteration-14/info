@@ -1,0 +1,21 @@
+klee -output-module=false -output-source=false -output-stats=false -use-batching-search -posix-runtime -only-output-states-covering-new -watchdog -allow-seed-extension -allow-seed-truncation -ignore-solver-failures -libc=uclibc -disable-inlining -simplify-sym-indices=false -use-forked-solver=false -use-cex-cache=true -max-memory-inhibit=true -optimize=false -max-memory=1500 -max-sym-array-size=5000 -max-instruction-time=40 -max-static-fork-pct=2 -max-static-solve-pct=0.25 -max-static-cpfork-pct=0.25 -batch-instructions=10000 -seed-file=/workspaces/grep_SymTuner/iteration-8/test000005.ktest -search=nurs:md2u -switch-type=simple -external-calls=concrete -max-time=30 -output-dir=/workspaces/grep_SymTuner/iteration-14 /workspaces/grep-3.4/obj-llvm/src/grep.bc -sym-arg 9 -sym-arg 2 -sym-files 1 4 -sym-stdin 12 -sym-stdout
+PID: 21893
+Using monotonic steady clock with 1/1000000000s resolution
+Started: 2022-05-07 11:33:11
+BEGIN searcher description
+<BatchingSearcher> timeBudget: 5.000000e+00s, instructionBudget: 10000, baseSearcher:
+WeightedRandomSearcher::MinDistToUncovered
+</BatchingSearcher>
+END searcher description
+Finished: 2022-05-07 11:33:41
+Elapsed: 00:00:30
+KLEE: done: explored paths = 1607
+KLEE: done: avg. constructs per query = 144
+KLEE: done: total queries = 939
+KLEE: done: valid queries = 724
+KLEE: done: invalid queries = 215
+KLEE: done: query cex = 939
+
+KLEE: done: total instructions = 18051313
+KLEE: done: completed paths = 1607
+KLEE: done: generated tests = 60

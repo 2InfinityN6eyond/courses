@@ -1,0 +1,458 @@
+        -:    0:Source:../../src/pcresearch.c
+        -:    0:Programs:50
+        -:    1:/* pcresearch.c - searching subroutines using PCRE for grep.
+        -:    2:   Copyright 2000, 2007, 2009-2020 Free Software Foundation, Inc.
+        -:    3:
+        -:    4:   This program is free software; you can redistribute it and/or modify
+        -:    5:   it under the terms of the GNU General Public License as published by
+        -:    6:   the Free Software Foundation; either version 3, or (at your option)
+        -:    7:   any later version.
+        -:    8:
+        -:    9:   This program is distributed in the hope that it will be useful,
+        -:   10:   but WITHOUT ANY WARRANTY; without even the implied warranty of
+        -:   11:   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+        -:   12:   GNU General Public License for more details.
+        -:   13:
+        -:   14:   You should have received a copy of the GNU General Public License
+        -:   15:   along with this program; if not, write to the Free Software
+        -:   16:   Foundation, Inc., 51 Franklin Street - Fifth Floor, Boston, MA
+        -:   17:   02110-1301, USA.  */
+        -:   18:
+        -:   19:/* Written August 1992 by Mike Haertel. */
+        -:   20:
+        -:   21:#include <config.h>
+        -:   22:#include "search.h"
+        -:   23:#include "die.h"
+        -:   24:
+        -:   25:#include <pcre.h>
+        -:   26:
+        -:   27:/* This must be at least 2; everything after that is for performance
+        -:   28:   in pcre_exec.  */
+        -:   29:enum { NSUB = 300 };
+        -:   30:
+        -:   31:#ifndef PCRE_EXTRA_MATCH_LIMIT_RECURSION
+        -:   32:# define PCRE_EXTRA_MATCH_LIMIT_RECURSION 0
+        -:   33:#endif
+        -:   34:#ifndef PCRE_STUDY_JIT_COMPILE
+        -:   35:# define PCRE_STUDY_JIT_COMPILE 0
+        -:   36:#endif
+        -:   37:#ifndef PCRE_STUDY_EXTRA_NEEDED
+        -:   38:# define PCRE_STUDY_EXTRA_NEEDED 0
+        -:   39:#endif
+        -:   40:
+        -:   41:struct pcre_comp
+        -:   42:{
+        -:   43:  /* Compiled internal form of a Perl regular expression.  */
+        -:   44:  pcre *cre;
+        -:   45:
+        -:   46:  /* Additional information about the pattern.  */
+        -:   47:  pcre_extra *extra;
+        -:   48:
+        -:   49:#if PCRE_STUDY_JIT_COMPILE
+        -:   50:  /* The JIT stack and its maximum size.  */
+        -:   51:  pcre_jit_stack *jit_stack;
+        -:   52:  int jit_stack_size;
+        -:   53:#endif
+        -:   54:
+        -:   55:  /* Table, indexed by ! (flag & PCRE_NOTBOL), of whether the empty
+        -:   56:     string matches when that flag is used.  */
+        -:   57:  int empty_match[2];
+        -:   58:};
+        -:   59:
+        -:   60:
+        -:   61:/* Match the already-compiled PCRE pattern against the data in SUBJECT,
+        -:   62:   of size SEARCH_BYTES and starting with offset SEARCH_OFFSET, with
+        -:   63:   options OPTIONS, and storing resulting matches into SUB.  Return
+        -:   64:   the (nonnegative) match location or a (negative) error number.  */
+        -:   65:static int
+function jit_exec called 0 returned 0% blocks executed 0%
+    #####:   66:jit_exec (struct pcre_comp *pc, char const *subject, int search_bytes,
+        -:   67:          int search_offset, int options, int *sub)
+        -:   68:{
+        -:   69:  while (true)
+    #####:   70:    {
+    #####:   71:      int e = pcre_exec (pc->cre, pc->extra, subject, search_bytes,
+call    0 never executed
+        -:   72:                         search_offset, options, sub, NSUB);
+        -:   73:
+        -:   74:#if PCRE_STUDY_JIT_COMPILE
+    #####:   75:      if (e == PCRE_ERROR_JIT_STACKLIMIT
+branch  0 never executed
+branch  1 never executed
+    #####:   76:          && 0 < pc->jit_stack_size && pc->jit_stack_size <= INT_MAX / 2)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:   77:        {
+    #####:   78:          int old_size = pc->jit_stack_size;
+    #####:   79:          int new_size = pc->jit_stack_size = old_size * 2;
+    #####:   80:          if (pc->jit_stack)
+branch  0 never executed
+branch  1 never executed
+    #####:   81:            pcre_jit_stack_free (pc->jit_stack);
+call    0 never executed
+    #####:   82:          pc->jit_stack = pcre_jit_stack_alloc (old_size, new_size);
+call    0 never executed
+    #####:   83:          if (!pc->jit_stack)
+branch  0 never executed
+branch  1 never executed
+    #####:   84:            die (EXIT_TROUBLE, 0,
+call    0 never executed
+call    1 never executed
+        -:   85:                 _("failed to allocate memory for the PCRE JIT stack"));
+    #####:   86:          pcre_assign_jit_stack (pc->extra, NULL, pc->jit_stack);
+call    0 never executed
+    #####:   87:          continue;
+        -:   88:        }
+        -:   89:#endif
+        -:   90:
+        -:   91:#if PCRE_EXTRA_MATCH_LIMIT_RECURSION
+    #####:   92:      if (e == PCRE_ERROR_RECURSIONLIMIT
+branch  0 never executed
+branch  1 never executed
+        -:   93:          && (PCRE_STUDY_EXTRA_NEEDED || pc->extra)
+    #####:   94:          && pc->extra->match_limit_recursion <= ULONG_MAX / 2)
+branch  0 never executed
+branch  1 never executed
+        -:   95:        {
+    #####:   96:          pc->extra->match_limit_recursion *= 2;
+    #####:   97:          if (pc->extra->match_limit_recursion == 0)
+branch  0 never executed
+branch  1 never executed
+        -:   98:            {
+    #####:   99:              pc->extra->match_limit_recursion = (1 << 24) - 1;
+    #####:  100:              pc->extra->flags |= PCRE_EXTRA_MATCH_LIMIT_RECURSION;
+        -:  101:            }
+    #####:  102:          continue;
+        -:  103:        }
+        -:  104:#endif
+        -:  105:
+    #####:  106:      return e;
+        -:  107:    }
+        -:  108:}
+        -:  109:
+        -:  110:void *
+function Pcompile called 0 returned 0% blocks executed 0%
+    #####:  111:Pcompile (char *pattern, size_t size, reg_syntax_t ignored)
+        -:  112:{
+        -:  113:  int e;
+        -:  114:  char const *ep;
+        -:  115:  static char const wprefix[] = "(?<!\\w)(?:";
+        -:  116:  static char const wsuffix[] = ")(?!\\w)";
+        -:  117:  static char const xprefix[] = "^(?:";
+        -:  118:  static char const xsuffix[] = ")$";
+    #####:  119:  int fix_len_max = MAX (sizeof wprefix - 1 + sizeof wsuffix - 1,
+        -:  120:                         sizeof xprefix - 1 + sizeof xsuffix - 1);
+    #####:  121:  char *re = xnmalloc (4, size + (fix_len_max + 4 - 1) / 4);
+call    0 never executed
+    #####:  122:  int flags = PCRE_DOLLAR_ENDONLY | (match_icase ? PCRE_CASELESS : 0);
+branch  0 never executed
+branch  1 never executed
+    #####:  123:  char const *patlim = pattern + size;
+    #####:  124:  char *n = re;
+        -:  125:  char const *p;
+        -:  126:  char const *pnul;
+    #####:  127:  struct pcre_comp *pc = xcalloc (1, sizeof (*pc));
+call    0 never executed
+        -:  128:
+    #####:  129:  if (localeinfo.multibyte)
+branch  0 never executed
+branch  1 never executed
+        -:  130:    {
+    #####:  131:      if (! localeinfo.using_utf8)
+branch  0 never executed
+branch  1 never executed
+    #####:  132:        die (EXIT_TROUBLE, 0, _("-P supports only unibyte and UTF-8 locales"));
+call    0 never executed
+call    1 never executed
+    #####:  133:      flags |= PCRE_UTF8;
+        -:  134:    }
+        -:  135:
+        -:  136:  /* FIXME: Remove this restriction.  */
+    #####:  137:  if (memchr (pattern, '\n', size))
+branch  0 never executed
+branch  1 never executed
+    #####:  138:    die (EXIT_TROUBLE, 0, _("the -P option only supports a single pattern"));
+call    0 never executed
+call    1 never executed
+        -:  139:
+    #####:  140:  *n = '\0';
+    #####:  141:  if (match_words)
+branch  0 never executed
+branch  1 never executed
+    #####:  142:    strcpy (n, wprefix);
+    #####:  143:  if (match_lines)
+branch  0 never executed
+branch  1 never executed
+    #####:  144:    strcpy (n, xprefix);
+    #####:  145:  n += strlen (n);
+        -:  146:
+        -:  147:  /* The PCRE interface doesn't allow NUL bytes in the pattern, so
+        -:  148:     replace each NUL byte in the pattern with the four characters
+        -:  149:     "\000", removing a preceding backslash if there are an odd
+        -:  150:     number of backslashes before the NUL.  */
+    #####:  151:  for (p = pattern; (pnul = memchr (p, '\0', patlim - p)); p = pnul + 1)
+branch  0 never executed
+branch  1 never executed
+        -:  152:    {
+    #####:  153:      memcpy (n, p, pnul - p);
+    #####:  154:      n += pnul - p;
+    #####:  155:      for (p = pnul; pattern < p && p[-1] == '\\'; p--)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  156:        continue;
+    #####:  157:      n -= (pnul - p) & 1;
+    #####:  158:      strcpy (n, "\\000");
+    #####:  159:      n += 4;
+        -:  160:    }
+        -:  161:
+    #####:  162:  memcpy (n, p, patlim - p);
+    #####:  163:  n += patlim - p;
+    #####:  164:  *n = '\0';
+    #####:  165:  if (match_words)
+branch  0 never executed
+branch  1 never executed
+    #####:  166:    strcpy (n, wsuffix);
+    #####:  167:  if (match_lines)
+branch  0 never executed
+branch  1 never executed
+    #####:  168:    strcpy (n, xsuffix);
+        -:  169:
+    #####:  170:  pc->cre = pcre_compile (re, flags, &ep, &e, pcre_maketables ());
+call    0 never executed
+call    1 never executed
+    #####:  171:  if (!pc->cre)
+branch  0 never executed
+branch  1 never executed
+    #####:  172:    die (EXIT_TROUBLE, 0, "%s", ep);
+call    0 never executed
+call    1 never executed
+        -:  173:
+    #####:  174:  int pcre_study_flags = PCRE_STUDY_EXTRA_NEEDED | PCRE_STUDY_JIT_COMPILE;
+    #####:  175:  pc->extra = pcre_study (pc->cre, pcre_study_flags, &ep);
+call    0 never executed
+    #####:  176:  if (ep)
+branch  0 never executed
+branch  1 never executed
+    #####:  177:    die (EXIT_TROUBLE, 0, "%s", ep);
+call    0 never executed
+call    1 never executed
+        -:  178:
+        -:  179:#if PCRE_STUDY_JIT_COMPILE
+    #####:  180:  if (pcre_fullinfo (pc->cre, pc->extra, PCRE_INFO_JIT, &e))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####:  181:    die (EXIT_TROUBLE, 0, _("internal error (should never happen)"));
+call    0 never executed
+call    1 never executed
+        -:  182:
+        -:  183:  /* The PCRE documentation says that a 32 KiB stack is the default.  */
+    #####:  184:  if (e)
+branch  0 never executed
+branch  1 never executed
+    #####:  185:    pc->jit_stack_size = 32 << 10;
+        -:  186:#endif
+        -:  187:
+    #####:  188:  free (re);
+        -:  189:
+        -:  190:  int sub[NSUB];
+    #####:  191:  pc->empty_match[false] = pcre_exec (pc->cre, pc->extra, "", 0, 0,
+call    0 never executed
+        -:  192:                                      PCRE_NOTBOL, sub, NSUB);
+    #####:  193:  pc->empty_match[true] = pcre_exec (pc->cre, pc->extra, "", 0, 0, 0, sub,
+call    0 never executed
+        -:  194:                                     NSUB);
+        -:  195:
+    #####:  196:  return pc;
+        -:  197:}
+        -:  198:
+        -:  199:size_t
+function Pexecute called 0 returned 0% blocks executed 0%
+    #####:  200:Pexecute (void *vcp, char const *buf, size_t size, size_t *match_size,
+        -:  201:          char const *start_ptr)
+        -:  202:{
+        -:  203:  int sub[NSUB];
+    #####:  204:  char const *p = start_ptr ? start_ptr : buf;
+branch  0 never executed
+branch  1 never executed
+    #####:  205:  bool bol = p[-1] == eolbyte;
+    #####:  206:  char const *line_start = buf;
+    #####:  207:  int e = PCRE_ERROR_NOMATCH;
+        -:  208:  char const *line_end;
+    #####:  209:  struct pcre_comp *pc = vcp;
+        -:  210:
+        -:  211:  /* The search address to pass to pcre_exec.  This is the start of
+        -:  212:     the buffer, or just past the most-recently discovered encoding
+        -:  213:     error or line end.  */
+    #####:  214:  char const *subject = buf;
+        -:  215:
+        -:  216:  do
+        -:  217:    {
+        -:  218:      /* Search line by line.  Although this code formerly used
+        -:  219:         PCRE_MULTILINE for performance, the performance wasn't always
+        -:  220:         better and the correctness issues were too puzzling.  See
+        -:  221:         Bug#22655.  */
+    #####:  222:      line_end = memchr (p, eolbyte, buf + size - p);
+    #####:  223:      if (INT_MAX < line_end - p)
+branch  0 never executed
+branch  1 never executed
+    #####:  224:        die (EXIT_TROUBLE, 0, _("exceeded PCRE's line length limit"));
+call    0 never executed
+call    1 never executed
+        -:  225:
+        -:  226:      for (;;)
+    #####:  227:        {
+        -:  228:          /* Skip past bytes that are easily determined to be encoding
+        -:  229:             errors, treating them as data that cannot match.  This is
+        -:  230:             faster than having pcre_exec check them.  */
+    #####:  231:          while (localeinfo.sbclen[to_uchar (*p)] == -1)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+        -:  232:            {
+    #####:  233:              p++;
+    #####:  234:              subject = p;
+    #####:  235:              bol = false;
+        -:  236:            }
+        -:  237:
+    #####:  238:          int search_offset = p - subject;
+        -:  239:
+        -:  240:          /* Check for an empty match; this is faster than letting
+        -:  241:             pcre_exec do it.  */
+    #####:  242:          if (p == line_end)
+branch  0 never executed
+branch  1 never executed
+        -:  243:            {
+    #####:  244:              sub[0] = sub[1] = search_offset;
+    #####:  245:              e = pc->empty_match[bol];
+    #####:  246:              break;
+        -:  247:            }
+        -:  248:
+    #####:  249:          int options = 0;
+    #####:  250:          if (!bol)
+branch  0 never executed
+branch  1 never executed
+    #####:  251:            options |= PCRE_NOTBOL;
+        -:  252:
+    #####:  253:          e = jit_exec (pc, subject, line_end - subject, search_offset,
+call    0 never executed
+        -:  254:                        options, sub);
+    #####:  255:          if (e != PCRE_ERROR_BADUTF8)
+branch  0 never executed
+branch  1 never executed
+    #####:  256:            break;
+    #####:  257:          int valid_bytes = sub[0];
+        -:  258:
+    #####:  259:          if (search_offset <= valid_bytes)
+branch  0 never executed
+branch  1 never executed
+        -:  260:            {
+        -:  261:              /* Try to match the string before the encoding error.  */
+    #####:  262:              if (valid_bytes == 0)
+branch  0 never executed
+branch  1 never executed
+        -:  263:                {
+        -:  264:                  /* Handle the empty-match case specially, for speed.
+        -:  265:                     This optimization is valid if VALID_BYTES is zero,
+        -:  266:                     which means SEARCH_OFFSET is also zero.  */
+    #####:  267:                  sub[1] = 0;
+    #####:  268:                  e = pc->empty_match[bol];
+        -:  269:                }
+        -:  270:              else
+    #####:  271:                e = jit_exec (pc, subject, valid_bytes, search_offset,
+call    0 never executed
+        -:  272:                              options | PCRE_NO_UTF8_CHECK | PCRE_NOTEOL, sub);
+        -:  273:
+    #####:  274:              if (e != PCRE_ERROR_NOMATCH)
+branch  0 never executed
+branch  1 never executed
+    #####:  275:                break;
+        -:  276:
+        -:  277:              /* Treat the encoding error as data that cannot match.  */
+    #####:  278:              p = subject + valid_bytes + 1;
+    #####:  279:              bol = false;
+        -:  280:            }
+        -:  281:
+    #####:  282:          subject += valid_bytes + 1;
+        -:  283:        }
+        -:  284:
+    #####:  285:      if (e != PCRE_ERROR_NOMATCH)
+branch  0 never executed
+branch  1 never executed
+    #####:  286:        break;
+    #####:  287:      bol = true;
+    #####:  288:      p = subject = line_start = line_end + 1;
+        -:  289:    }
+    #####:  290:  while (p < buf + size);
+branch  0 never executed
+branch  1 never executed
+        -:  291:
+    #####:  292:  if (e <= 0)
+branch  0 never executed
+branch  1 never executed
+        -:  293:    {
+    #####:  294:      switch (e)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+        -:  295:        {
+    #####:  296:        case PCRE_ERROR_NOMATCH:
+    #####:  297:          break;
+        -:  298:
+    #####:  299:        case PCRE_ERROR_NOMEMORY:
+    #####:  300:          die (EXIT_TROUBLE, 0, _("memory exhausted"));
+call    0 never executed
+call    1 never executed
+        -:  301:
+        -:  302:#if PCRE_STUDY_JIT_COMPILE
+    #####:  303:        case PCRE_ERROR_JIT_STACKLIMIT:
+    #####:  304:          die (EXIT_TROUBLE, 0, _("exhausted PCRE JIT stack"));
+call    0 never executed
+call    1 never executed
+        -:  305:#endif
+        -:  306:
+    #####:  307:        case PCRE_ERROR_MATCHLIMIT:
+    #####:  308:          die (EXIT_TROUBLE, 0, _("exceeded PCRE's backtracking limit"));
+call    0 never executed
+call    1 never executed
+        -:  309:
+    #####:  310:        default:
+        -:  311:          /* For now, we lump all remaining PCRE failures into this basket.
+        -:  312:             If anyone cares to provide sample grep usage that can trigger
+        -:  313:             particular PCRE errors, we can add to the list (above) of more
+        -:  314:             detailed diagnostics.  */
+    #####:  315:          die (EXIT_TROUBLE, 0, _("internal PCRE error: %d"), e);
+call    0 never executed
+call    1 never executed
+        -:  316:        }
+        -:  317:
+    #####:  318:      return -1;
+        -:  319:    }
+        -:  320:  else
+        -:  321:    {
+    #####:  322:      char const *matchbeg = subject + sub[0];
+    #####:  323:      char const *matchend = subject + sub[1];
+        -:  324:      char const *beg;
+        -:  325:      char const *end;
+    #####:  326:      if (start_ptr)
+branch  0 never executed
+branch  1 never executed
+        -:  327:        {
+    #####:  328:          beg = matchbeg;
+    #####:  329:          end = matchend;
+        -:  330:        }
+        -:  331:      else
+        -:  332:        {
+    #####:  333:          beg = line_start;
+    #####:  334:          end = line_end + 1;
+        -:  335:        }
+    #####:  336:      *match_size = end - beg;
+    #####:  337:      return beg - buf;
+        -:  338:    }
+        -:  339:}

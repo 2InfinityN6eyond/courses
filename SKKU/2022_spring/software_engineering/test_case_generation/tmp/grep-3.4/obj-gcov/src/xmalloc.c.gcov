@@ -1,0 +1,154 @@
+        -:    0:Source:../../lib/xmalloc.c
+        -:    0:Programs:50
+        -:    1:/* xmalloc.c -- malloc with out of memory checking
+        -:    2:
+        -:    3:   Copyright (C) 1990-2000, 2002-2006, 2008-2020 Free Software Foundation, Inc.
+        -:    4:
+        -:    5:   This program is free software: you can redistribute it and/or modify
+        -:    6:   it under the terms of the GNU General Public License as published by
+        -:    7:   the Free Software Foundation; either version 3 of the License, or
+        -:    8:   (at your option) any later version.
+        -:    9:
+        -:   10:   This program is distributed in the hope that it will be useful,
+        -:   11:   but WITHOUT ANY WARRANTY; without even the implied warranty of
+        -:   12:   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+        -:   13:   GNU General Public License for more details.
+        -:   14:
+        -:   15:   You should have received a copy of the GNU General Public License
+        -:   16:   along with this program.  If not, see <https://www.gnu.org/licenses/>.  */
+        -:   17:
+        -:   18:#include <config.h>
+        -:   19:
+        -:   20:#define XALLOC_INLINE _GL_EXTERN_INLINE
+        -:   21:
+        -:   22:#include "xalloc.h"
+        -:   23:
+        -:   24:#include <stdlib.h>
+        -:   25:#include <string.h>
+        -:   26:
+        -:   27:/* 1 if calloc is known to be compatible with GNU calloc.  This
+        -:   28:   matters if we are not also using the calloc module, which defines
+        -:   29:   HAVE_CALLOC_GNU and supports the GNU API even on non-GNU platforms.  */
+        -:   30:#if defined HAVE_CALLOC_GNU || (defined __GLIBC__ && !defined __UCLIBC__)
+        -:   31:enum { HAVE_GNU_CALLOC = 1 };
+        -:   32:#else
+        -:   33:enum { HAVE_GNU_CALLOC = 0 };
+        -:   34:#endif
+        -:   35:
+        -:   36:/* Allocate N bytes of memory dynamically, with error checking.  */
+        -:   37:
+        -:   38:void *
+function xmalloc called 6 returned 100% blocks executed 60%
+        6:   39:xmalloc (size_t n)
+        -:   40:{
+        6:   41:  void *p = malloc (n);
+        6:   42:  if (!p && n != 0)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+branch  2 never executed
+branch  3 never executed
+    #####:   43:    xalloc_die ();
+call    0 never executed
+        6:   44:  return p;
+        -:   45:}
+        -:   46:
+        -:   47:/* Change the size of an allocated block of memory P to N bytes,
+        -:   48:   with error checking.  */
+        -:   49:
+        -:   50:void *
+function xrealloc called 1 returned 100% blocks executed 50%
+        1:   51:xrealloc (void *p, size_t n)
+        -:   52:{
+        1:   53:  if (!n && p)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+branch  2 never executed
+branch  3 never executed
+        -:   54:    {
+        -:   55:      /* The GNU and C99 realloc behaviors disagree here.  Act like
+        -:   56:         GNU, even if the underlying realloc is C99.  */
+    #####:   57:      free (p);
+    #####:   58:      return NULL;
+        -:   59:    }
+        -:   60:
+        1:   61:  p = realloc (p, n);
+        1:   62:  if (!p && n)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+branch  2 never executed
+branch  3 never executed
+    #####:   63:    xalloc_die ();
+call    0 never executed
+        1:   64:  return p;
+        -:   65:}
+        -:   66:
+        -:   67:/* If P is null, allocate a block of at least *PN bytes; otherwise,
+        -:   68:   reallocate P so that it contains more than *PN bytes.  *PN must be
+        -:   69:   nonzero unless P is null.  Set *PN to the new block's size, and
+        -:   70:   return the pointer to the new block.  *PN is never set to zero, and
+        -:   71:   the returned pointer is never null.  */
+        -:   72:
+        -:   73:void *
+function x2realloc called 0 returned 0% blocks executed 0%
+    #####:   74:x2realloc (void *p, size_t *pn)
+        -:   75:{
+    #####:   76:  return x2nrealloc (p, pn, 1);
+call    0 never executed
+        -:   77:}
+        -:   78:
+        -:   79:/* Allocate N bytes of zeroed memory dynamically, with error checking.
+        -:   80:   There's no need for xnzalloc (N, S), since it would be equivalent
+        -:   81:   to xcalloc (N, S).  */
+        -:   82:
+        -:   83:void *
+function xzalloc called 0 returned 0% blocks executed 0%
+    #####:   84:xzalloc (size_t n)
+        -:   85:{
+    #####:   86:  return xcalloc (n, 1);
+call    0 never executed
+        -:   87:}
+        -:   88:
+        -:   89:/* Allocate zeroed memory for N elements of S bytes, with error
+        -:   90:   checking.  S must be nonzero.  */
+        -:   91:
+        -:   92:void *
+function xcalloc called 0 returned 0% blocks executed 0%
+    #####:   93:xcalloc (size_t n, size_t s)
+        -:   94:{
+        -:   95:  void *p;
+        -:   96:  /* Test for overflow, since objects with size greater than
+        -:   97:     PTRDIFF_MAX cause pointer subtraction to go awry.  Omit size-zero
+        -:   98:     tests if HAVE_GNU_CALLOC, since GNU calloc never returns NULL if
+        -:   99:     successful.  */
+    #####:  100:  if (xalloc_oversized (n, s)
+branch  0 never executed
+branch  1 never executed
+    #####:  101:      || (! (p = calloc (n, s)) && (HAVE_GNU_CALLOC || n != 0)))
+branch  0 never executed
+branch  1 never executed
+    #####:  102:    xalloc_die ();
+call    0 never executed
+    #####:  103:  return p;
+        -:  104:}
+        -:  105:
+        -:  106:/* Clone an object P of size S, with error checking.  There's no need
+        -:  107:   for xnmemdup (P, N, S), since xmemdup (P, N * S) works without any
+        -:  108:   need for an arithmetic overflow check.  */
+        -:  109:
+        -:  110:void *
+function xmemdup called 1 returned 100% blocks executed 100%
+        1:  111:xmemdup (void const *p, size_t s)
+        -:  112:{
+        1:  113:  return memcpy (xmalloc (s), p, s);
+call    0 returned 100%
+        -:  114:}
+        -:  115:
+        -:  116:/* Clone STRING.  */
+        -:  117:
+        -:  118:char *
+function xstrdup called 0 returned 0% blocks executed 0%
+    #####:  119:xstrdup (char const *string)
+        -:  120:{
+    #####:  121:  return xmemdup (string, strlen (string) + 1);
+call    0 never executed
+        -:  122:}

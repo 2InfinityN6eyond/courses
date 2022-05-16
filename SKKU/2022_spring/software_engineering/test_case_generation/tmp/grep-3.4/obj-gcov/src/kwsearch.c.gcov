@@ -1,0 +1,397 @@
+        -:    0:Source:../../src/kwsearch.c
+        -:    0:Programs:50
+        -:    1:/* kwsearch.c - searching subroutines using kwset for grep.
+        -:    2:   Copyright 1992, 1998, 2000, 2007, 2009-2020 Free Software Foundation, Inc.
+        -:    3:
+        -:    4:   This program is free software; you can redistribute it and/or modify
+        -:    5:   it under the terms of the GNU General Public License as published by
+        -:    6:   the Free Software Foundation; either version 3, or (at your option)
+        -:    7:   any later version.
+        -:    8:
+        -:    9:   This program is distributed in the hope that it will be useful,
+        -:   10:   but WITHOUT ANY WARRANTY; without even the implied warranty of
+        -:   11:   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+        -:   12:   GNU General Public License for more details.
+        -:   13:
+        -:   14:   You should have received a copy of the GNU General Public License
+        -:   15:   along with this program; if not, write to the Free Software
+        -:   16:   Foundation, Inc., 51 Franklin Street - Fifth Floor, Boston, MA
+        -:   17:   02110-1301, USA.  */
+        -:   18:
+        -:   19:/* Written August 1992 by Mike Haertel. */
+        -:   20:
+        -:   21:#include <config.h>
+        -:   22:#include "search.h"
+        -:   23:
+        -:   24:/* A compiled -F pattern list.  */
+        -:   25:
+        -:   26:struct kwsearch
+        -:   27:{
+        -:   28:  /* The kwset for this pattern list.  */
+        -:   29:  kwset_t kwset;
+        -:   30:
+        -:   31:  /* The number of user-specified patterns.  This is less than
+        -:   32:     'kwswords (kwset)' when some extra one-character words have been
+        -:   33:     appended, one for each troublesome character that will require a
+        -:   34:     DFA search.  */
+        -:   35:  ptrdiff_t words;
+        -:   36:
+        -:   37:  /* The user's pattern and its size in bytes.  */
+        -:   38:  char *pattern;
+        -:   39:  size_t size;
+        -:   40:
+        -:   41:  /* The user's pattern compiled as a regular expression,
+        -:   42:     or null if it has not been compiled.  */
+        -:   43:  void *re;
+        -:   44:};
+        -:   45:
+        -:   46:/* Compile the -F style PATTERN, containing SIZE bytes.  Return a
+        -:   47:   description of the compiled pattern.  */
+        -:   48:
+        -:   49:void *
+function Fcompile called 1 returned 100% blocks executed 37%
+        1:   50:Fcompile (char *pattern, size_t size, reg_syntax_t ignored)
+        -:   51:{
+        -:   52:  kwset_t kwset;
+        1:   53:  ptrdiff_t total = size;
+        1:   54:  char *buf = NULL;
+        1:   55:  size_t bufalloc = 0;
+        -:   56:
+        1:   57:  kwset = kwsinit (true);
+call    0 returned 100%
+        -:   58:
+        1:   59:  char const *p = pattern;
+        -:   60:  do
+        -:   61:    {
+        -:   62:      ptrdiff_t len;
+        2:   63:      char const *sep = memchr (p, '\n', total);
+        2:   64:      if (sep)
+branch  0 taken 50% (fallthrough)
+branch  1 taken 50%
+        -:   65:        {
+        1:   66:          len = sep - p;
+        1:   67:          sep++;
+        1:   68:          total -= (len + 1);
+        -:   69:        }
+        -:   70:      else
+        -:   71:        {
+        1:   72:          len = total;
+        1:   73:          total = 0;
+        -:   74:        }
+        -:   75:
+        2:   76:      if (match_lines)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -:   77:        {
+    #####:   78:          if (eolbyte == '\n' && pattern < p && sep)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+    #####:   79:            p--;
+        -:   80:          else
+        -:   81:            {
+    #####:   82:              if (bufalloc < len + 2)
+branch  0 never executed
+branch  1 never executed
+        -:   83:                {
+    #####:   84:                  free (buf);
+    #####:   85:                  bufalloc = len + 2;
+    #####:   86:                  buf = x2realloc (NULL, &bufalloc);
+call    0 never executed
+    #####:   87:                  buf[0] = eolbyte;
+        -:   88:                }
+    #####:   89:              memcpy (buf + 1, p, len);
+    #####:   90:              buf[len + 1] = eolbyte;
+    #####:   91:              p = buf;
+        -:   92:            }
+    #####:   93:          len += 2;
+        -:   94:        }
+        2:   95:      kwsincr (kwset, p, len);
+call    0 returned 100%
+        -:   96:
+        2:   97:      p = sep;
+        -:   98:    }
+        2:   99:  while (p);
+branch  0 taken 50%
+branch  1 taken 50% (fallthrough)
+        -:  100:
+        1:  101:  free (buf);
+        1:  102:  ptrdiff_t words = kwswords (kwset);
+        -:  103:
+        1:  104:  if (match_icase)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -:  105:    {
+        -:  106:      /* For each pattern character C that has a case folded
+        -:  107:         counterpart F that is multibyte and so cannot easily be
+        -:  108:         implemented via translating a single byte, append a pattern
+        -:  109:         containing just F.  That way, if the data contains F, the
+        -:  110:         matcher can fall back on DFA.  For example, if C is 'i' and
+        -:  111:         the locale is en_US.utf8, append a pattern containing just
+        -:  112:         the character U+0131 (LATIN SMALL LETTER DOTLESS I), so that
+        -:  113:         Fexecute will use a DFA if the data contain U+0131.  */
+    #####:  114:      mbstate_t mbs = { 0 };
+    #####:  115:      char checked[NCHAR] = {0,};
+    #####:  116:      for (p = pattern; p < pattern + size; p++)
+branch  0 never executed
+branch  1 never executed
+        -:  117:        {
+    #####:  118:          unsigned char c = *p;
+    #####:  119:          if (checked[c])
+branch  0 never executed
+branch  1 never executed
+    #####:  120:            continue;
+    #####:  121:          checked[c] = true;
+        -:  122:
+    #####:  123:          wint_t wc = localeinfo.sbctowc[c];
+        -:  124:          wchar_t folded[CASE_FOLDED_BUFSIZE];
+        -:  125:
+    #####:  126:          for (int i = case_folded_counterparts (wc, folded); 0 <= --i; )
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+        -:  127:            {
+        -:  128:              char s[MB_LEN_MAX];
+    #####:  129:              int nbytes = wcrtomb (s, folded[i], &mbs);
+call    0 never executed
+    #####:  130:              if (1 < nbytes)
+branch  0 never executed
+branch  1 never executed
+    #####:  131:                kwsincr (kwset, s, nbytes);
+call    0 never executed
+        -:  132:            }
+        -:  133:        }
+        -:  134:    }
+        -:  135:
+        1:  136:  kwsprep (kwset);
+call    0 returned 100%
+        -:  137:
+        1:  138:  struct kwsearch *kwsearch = xmalloc (sizeof *kwsearch);
+call    0 returned 100%
+        1:  139:  kwsearch->kwset = kwset;
+        1:  140:  kwsearch->words = words;
+        1:  141:  kwsearch->pattern = pattern;
+        1:  142:  kwsearch->size = size;
+        1:  143:  kwsearch->re = NULL;
+        1:  144:  return kwsearch;
+        -:  145:}
+        -:  146:
+        -:  147:/* Use the compiled pattern VCP to search the buffer BUF of size SIZE.
+        -:  148:   If found, return the offset of the first match and store its
+        -:  149:   size into *MATCH_SIZE.  If not found, return SIZE_MAX.
+        -:  150:   If START_PTR is nonnull, start searching there.  */
+        -:  151:size_t
+function Fexecute called 2 returned 100% blocks executed 32%
+        2:  152:Fexecute (void *vcp, char const *buf, size_t size, size_t *match_size,
+        -:  153:          char const *start_ptr)
+        -:  154:{
+        -:  155:  char const *beg, *end, *mb_start;
+        -:  156:  ptrdiff_t len;
+        2:  157:  char eol = eolbyte;
+        -:  158:  struct kwsmatch kwsmatch;
+        -:  159:  size_t ret_val;
+        -:  160:  bool mb_check;
+        -:  161:  bool longest;
+        2:  162:  struct kwsearch *kwsearch = vcp;
+        2:  163:  kwset_t kwset = kwsearch->kwset;
+        -:  164:  size_t mbclen;
+        -:  165:
+        2:  166:  if (match_lines)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####:  167:    mb_check = longest = false;
+        -:  168:  else
+        -:  169:    {
+        2:  170:      mb_check = localeinfo.multibyte & !localeinfo.using_utf8;
+        2:  171:      longest = mb_check | !!start_ptr | match_words;
+        -:  172:    }
+        -:  173:
+        2:  174:  for (mb_start = beg = start_ptr ? start_ptr : buf; beg <= buf + size; beg++)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+branch  2 taken 100%
+branch  3 taken 0% (fallthrough)
+        -:  175:    {
+        4:  176:      ptrdiff_t offset = kwsexec (kwset, beg - match_lines,
+call    0 returned 100%
+        2:  177:                                  buf + size - beg + match_lines, &kwsmatch,
+        -:  178:                                  longest);
+        2:  179:      if (offset < 0)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####:  180:        break;
+        2:  181:      len = kwsmatch.size[0] - 2 * match_lines;
+        -:  182:
+        2:  183:      if (kwsearch->words <= kwsmatch.index)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -:  184:        {
+        -:  185:          /* The data contain a multibyte character that matches
+        -:  186:             some pattern character that is a case folded counterpart.
+        -:  187:             Since the kwset code cannot handle this case, fall back
+        -:  188:             on the DFA code, which can.  */
+    #####:  189:          if (! kwsearch->re)
+branch  0 never executed
+branch  1 never executed
+        -:  190:            {
+    #####:  191:              fgrep_to_grep_pattern (&kwsearch->pattern, &kwsearch->size);
+call    0 never executed
+    #####:  192:              kwsearch->re = GEAcompile (kwsearch->pattern, kwsearch->size,
+call    0 never executed
+        -:  193:                                         RE_SYNTAX_GREP);
+        -:  194:            }
+    #####:  195:          return EGexecute (kwsearch->re, buf, size, match_size, start_ptr);
+call    0 never executed
+        -:  196:        }
+        -:  197:
+        2:  198:      mbclen = 0;
+        2:  199:      if (mb_check
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####:  200:          && mb_goback (&mb_start, &mbclen, beg + offset, buf + size) != 0)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+        -:  201:        {
+        -:  202:          /* We have matched a single byte that is not at the beginning of a
+        -:  203:             multibyte character.  mb_goback has advanced MB_START past that
+        -:  204:             multibyte character.  Now, we want to position BEG so that the
+        -:  205:             next kwsexec search starts there.  Thus, to compensate for the
+        -:  206:             for-loop's BEG++, above, subtract one here.  This code is
+        -:  207:             unusually hard to reach, and exceptionally, let's show how to
+        -:  208:             trigger it here:
+        -:  209:
+        -:  210:               printf '\203AA\n'|LC_ALL=ja_JP.SHIFT_JIS src/grep -F A
+        -:  211:
+        -:  212:             That assumes the named locale is installed.
+        -:  213:             Note that your system's shift-JIS locale may have a different
+        -:  214:             name, possibly including "sjis".  */
+    #####:  215:          beg = mb_start - 1;
+    #####:  216:          continue;
+        -:  217:        }
+        2:  218:      beg += offset;
+        2:  219:      if (!!start_ptr & !match_words)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####:  220:        goto success_in_beg_and_len;
+        2:  221:      if (match_lines)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -:  222:        {
+    #####:  223:          len += start_ptr == NULL;
+    #####:  224:          goto success_in_beg_and_len;
+        -:  225:        }
+        2:  226:      if (! match_words)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        2:  227:        goto success;
+        -:  228:
+        -:  229:      /* We need a preceding mb_start pointer.  Use the beginning of line
+        -:  230:         if there is a preceding newline.  */
+    #####:  231:      if (mbclen == 0)
+branch  0 never executed
+branch  1 never executed
+        -:  232:        {
+    #####:  233:          char const *nl = memrchr (mb_start, eol, beg - mb_start);
+    #####:  234:          if (nl)
+branch  0 never executed
+branch  1 never executed
+    #####:  235:            mb_start = nl + 1;
+        -:  236:        }
+        -:  237:
+        -:  238:      /* Succeed if neither the preceding nor the following character is a
+        -:  239:         word constituent.  If the preceding is not, yet the following
+        -:  240:         character IS a word constituent, keep trying with shorter matches.  */
+    #####:  241:      if (mbclen > 0
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  242:          ? ! wordchar_next (beg - mbclen, buf + size)
+    #####:  243:          : ! wordchar_prev (mb_start, beg, buf + size))
+        -:  244:        for (;;)
+        -:  245:          {
+    #####:  246:            if (! wordchar_next (beg + len, buf + size))
+branch  0 never executed
+branch  1 never executed
+        -:  247:              {
+    #####:  248:                if (start_ptr)
+branch  0 never executed
+branch  1 never executed
+    #####:  249:                  goto success_in_beg_and_len;
+        -:  250:                else
+    #####:  251:                  goto success;
+        -:  252:              }
+    #####:  253:            if (!start_ptr && !localeinfo.multibyte)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  254:              {
+    #####:  255:                if (! kwsearch->re)
+branch  0 never executed
+branch  1 never executed
+        -:  256:                  {
+    #####:  257:                    fgrep_to_grep_pattern (&kwsearch->pattern, &kwsearch->size);
+call    0 never executed
+    #####:  258:                    kwsearch->re = GEAcompile (kwsearch->pattern,
+call    0 never executed
+        -:  259:                                               kwsearch->size,
+        -:  260:                                               RE_SYNTAX_GREP);
+        -:  261:                  }
+    #####:  262:                end = memchr (beg + len, eol, (buf + size) - (beg + len));
+    #####:  263:                end = end ? end + 1 : buf + size;
+branch  0 never executed
+branch  1 never executed
+    #####:  264:                if (EGexecute (kwsearch->re, beg, end - beg, match_size, NULL)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+        -:  265:                    != (size_t) -1)
+    #####:  266:                  goto success_match_words;
+    #####:  267:                beg = end - 1;
+    #####:  268:                break;
+        -:  269:              }
+    #####:  270:            if (!len)
+branch  0 never executed
+branch  1 never executed
+    #####:  271:              break;
+    #####:  272:            offset = kwsexec (kwset, beg, --len, &kwsmatch, true);
+call    0 never executed
+    #####:  273:            if (offset != 0)
+branch  0 never executed
+branch  1 never executed
+    #####:  274:              break;
+    #####:  275:            len = kwsmatch.size[0];
+        -:  276:          }
+        -:  277:
+        -:  278:      /* No word match was found at BEG.  Skip past word constituents,
+        -:  279:         since they cannot precede the next match and not skipping
+        -:  280:         them could make things much slower.  */
+    #####:  281:      beg += wordchars_size (beg, buf + size);
+    #####:  282:      mb_start = beg;
+        -:  283:    } /* for (beg in buf) */
+        -:  284:
+    #####:  285:  return -1;
+        -:  286:
+        2:  287: success:
+        2:  288:  end = memchr (beg + len, eol, (buf + size) - (beg + len));
+        2:  289:  end = end ? end + 1 : buf + size;
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        2:  290: success_match_words:
+        2:  291:  beg = memrchr (buf, eol, beg - buf);
+        2:  292:  beg = beg ? beg + 1 : buf;
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        2:  293:  len = end - beg;
+        2:  294: success_in_beg_and_len:;
+        2:  295:  size_t off = beg - buf;
+        -:  296:
+        2:  297:  *match_size = len;
+        2:  298:  ret_val = off;
+        2:  299:  return ret_val;
+        -:  300:}

@@ -1,0 +1,10 @@
+Error: failed external call: pcre_maketables
+File: ../../src/pcresearch.c
+Line: 170
+assembly.ll line: 58570
+Stack: 
+	#000058570 in Pcompile (=94849388965536, =1, =0) at ../../src/pcresearch.c:170
+	#100044435 in __klee_posix_wrapped_main (=5, =94849383648064) at ../../src/grep.c:2900
+	#200003708 in __user_main (=14, =94849317330432) at /opt/klee-src/runtime/POSIX/klee_init_env.c:243
+	#300000931 in __uClibc_main (=14, =94849317330432) at libc/misc/internals/__uClibc_main.c:401
+	#400001097 in main (=14, =94849317330432)

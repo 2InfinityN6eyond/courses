@@ -1,0 +1,1529 @@
+        -:    0:Source:../../lib/quotearg.c
+        -:    0:Programs:50
+        -:    1:/* quotearg.c - quote arguments for output
+        -:    2:
+        -:    3:   Copyright (C) 1998-2002, 2004-2020 Free Software Foundation, Inc.
+        -:    4:
+        -:    5:   This program is free software: you can redistribute it and/or modify
+        -:    6:   it under the terms of the GNU General Public License as published by
+        -:    7:   the Free Software Foundation; either version 3 of the License, or
+        -:    8:   (at your option) any later version.
+        -:    9:
+        -:   10:   This program is distributed in the hope that it will be useful,
+        -:   11:   but WITHOUT ANY WARRANTY; without even the implied warranty of
+        -:   12:   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+        -:   13:   GNU General Public License for more details.
+        -:   14:
+        -:   15:   You should have received a copy of the GNU General Public License
+        -:   16:   along with this program.  If not, see <https://www.gnu.org/licenses/>.  */
+        -:   17:
+        -:   18:/* Written by Paul Eggert <eggert@twinsun.com> */
+        -:   19:
+        -:   20:/* Without this pragma, gcc 4.7.0 20111124 mistakenly suggests that
+        -:   21:   the quoting_options_from_style function might be candidate for
+        -:   22:   attribute 'pure'  */
+        -:   23:#if (__GNUC__ == 4 && 6 <= __GNUC_MINOR__) || 4 < __GNUC__
+        -:   24:# pragma GCC diagnostic ignored "-Wsuggest-attribute=pure"
+        -:   25:#endif
+        -:   26:
+        -:   27:#include <config.h>
+        -:   28:
+        -:   29:#include "quotearg.h"
+        -:   30:#include "quote.h"
+        -:   31:
+        -:   32:#include "minmax.h"
+        -:   33:#include "xalloc.h"
+        -:   34:#include "c-strcaseeq.h"
+        -:   35:#include "localcharset.h"
+        -:   36:
+        -:   37:#include <ctype.h>
+        -:   38:#include <errno.h>
+        -:   39:#include <limits.h>
+        -:   40:#include <stdbool.h>
+        -:   41:#include <stdint.h>
+        -:   42:#include <stdlib.h>
+        -:   43:#include <string.h>
+        -:   44:#include <wchar.h>
+        -:   45:#include <wctype.h>
+        -:   46:
+        -:   47:#include "gettext.h"
+        -:   48:#define _(msgid) gettext (msgid)
+        -:   49:#define N_(msgid) msgid
+        -:   50:
+        -:   51:#ifndef SIZE_MAX
+        -:   52:# define SIZE_MAX ((size_t) -1)
+        -:   53:#endif
+        -:   54:
+        -:   55:#define INT_BITS (sizeof (int) * CHAR_BIT)
+        -:   56:
+        -:   57:#ifndef FALLTHROUGH
+        -:   58:# if __GNUC__ < 7
+        -:   59:#  define FALLTHROUGH ((void) 0)
+        -:   60:# else
+        -:   61:#  define FALLTHROUGH __attribute__ ((__fallthrough__))
+        -:   62:# endif
+        -:   63:#endif
+        -:   64:
+        -:   65:struct quoting_options
+        -:   66:{
+        -:   67:  /* Basic quoting style.  */
+        -:   68:  enum quoting_style style;
+        -:   69:
+        -:   70:  /* Additional flags.  Bitwise combination of enum quoting_flags.  */
+        -:   71:  int flags;
+        -:   72:
+        -:   73:  /* Quote the characters indicated by this bit vector even if the
+        -:   74:     quoting style would not normally require them to be quoted.  */
+        -:   75:  unsigned int quote_these_too[(UCHAR_MAX / INT_BITS) + 1];
+        -:   76:
+        -:   77:  /* The left quote for custom_quoting_style.  */
+        -:   78:  char const *left_quote;
+        -:   79:
+        -:   80:  /* The right quote for custom_quoting_style.  */
+        -:   81:  char const *right_quote;
+        -:   82:};
+        -:   83:
+        -:   84:/* Names of quoting styles.  */
+        -:   85:char const *const quoting_style_args[] =
+        -:   86:{
+        -:   87:  "literal",
+        -:   88:  "shell",
+        -:   89:  "shell-always",
+        -:   90:  "shell-escape",
+        -:   91:  "shell-escape-always",
+        -:   92:  "c",
+        -:   93:  "c-maybe",
+        -:   94:  "escape",
+        -:   95:  "locale",
+        -:   96:  "clocale",
+        -:   97:  0
+        -:   98:};
+        -:   99:
+        -:  100:/* Correspondences to quoting style names.  */
+        -:  101:enum quoting_style const quoting_style_vals[] =
+        -:  102:{
+        -:  103:  literal_quoting_style,
+        -:  104:  shell_quoting_style,
+        -:  105:  shell_always_quoting_style,
+        -:  106:  shell_escape_quoting_style,
+        -:  107:  shell_escape_always_quoting_style,
+        -:  108:  c_quoting_style,
+        -:  109:  c_maybe_quoting_style,
+        -:  110:  escape_quoting_style,
+        -:  111:  locale_quoting_style,
+        -:  112:  clocale_quoting_style
+        -:  113:};
+        -:  114:
+        -:  115:/* The default quoting options.  */
+        -:  116:static struct quoting_options default_quoting_options;
+        -:  117:
+        -:  118:/* Allocate a new set of quoting options, with contents initially identical
+        -:  119:   to O if O is not null, or to the default if O is null.
+        -:  120:   It is the caller's responsibility to free the result.  */
+        -:  121:struct quoting_options *
+function clone_quoting_options called 0 returned 0% blocks executed 0%
+    #####:  122:clone_quoting_options (struct quoting_options *o)
+        -:  123:{
+    #####:  124:  int e = errno;
+    #####:  125:  struct quoting_options *p = xmemdup (o ? o : &default_quoting_options,
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+        -:  126:                                       sizeof *o);
+    #####:  127:  errno = e;
+    #####:  128:  return p;
+        -:  129:}
+        -:  130:
+        -:  131:/* Get the value of O's quoting style.  If O is null, use the default.  */
+        -:  132:enum quoting_style
+function get_quoting_style called 0 returned 0% blocks executed 0%
+    #####:  133:get_quoting_style (struct quoting_options const *o)
+        -:  134:{
+    #####:  135:  return (o ? o : &default_quoting_options)->style;
+branch  0 never executed
+branch  1 never executed
+        -:  136:}
+        -:  137:
+        -:  138:/* In O (or in the default if O is null),
+        -:  139:   set the value of the quoting style to S.  */
+        -:  140:void
+function set_quoting_style called 0 returned 0% blocks executed 0%
+    #####:  141:set_quoting_style (struct quoting_options *o, enum quoting_style s)
+        -:  142:{
+    #####:  143:  (o ? o : &default_quoting_options)->style = s;
+branch  0 never executed
+branch  1 never executed
+    #####:  144:}
+        -:  145:
+        -:  146:/* In O (or in the default if O is null),
+        -:  147:   set the value of the quoting options for character C to I.
+        -:  148:   Return the old value.  Currently, the only values defined for I are
+        -:  149:   0 (the default) and 1 (which means to quote the character even if
+        -:  150:   it would not otherwise be quoted).  */
+        -:  151:int
+function set_char_quoting called 0 returned 0% blocks executed 0%
+    #####:  152:set_char_quoting (struct quoting_options *o, char c, int i)
+        -:  153:{
+    #####:  154:  unsigned char uc = c;
+    #####:  155:  unsigned int *p =
+    #####:  156:    (o ? o : &default_quoting_options)->quote_these_too + uc / INT_BITS;
+branch  0 never executed
+branch  1 never executed
+    #####:  157:  int shift = uc % INT_BITS;
+    #####:  158:  int r = (*p >> shift) & 1;
+    #####:  159:  *p ^= ((i & 1) ^ r) << shift;
+    #####:  160:  return r;
+        -:  161:}
+        -:  162:
+        -:  163:/* In O (or in the default if O is null),
+        -:  164:   set the value of the quoting options flag to I, which can be a
+        -:  165:   bitwise combination of enum quoting_flags, or 0 for default
+        -:  166:   behavior.  Return the old value.  */
+        -:  167:int
+function set_quoting_flags called 0 returned 0% blocks executed 0%
+    #####:  168:set_quoting_flags (struct quoting_options *o, int i)
+        -:  169:{
+        -:  170:  int r;
+    #####:  171:  if (!o)
+branch  0 never executed
+branch  1 never executed
+    #####:  172:    o = &default_quoting_options;
+    #####:  173:  r = o->flags;
+    #####:  174:  o->flags = i;
+    #####:  175:  return r;
+        -:  176:}
+        -:  177:
+        -:  178:void
+function set_custom_quoting called 0 returned 0% blocks executed 0%
+    #####:  179:set_custom_quoting (struct quoting_options *o,
+        -:  180:                    char const *left_quote, char const *right_quote)
+        -:  181:{
+    #####:  182:  if (!o)
+branch  0 never executed
+branch  1 never executed
+    #####:  183:    o = &default_quoting_options;
+    #####:  184:  o->style = custom_quoting_style;
+    #####:  185:  if (!left_quote || !right_quote)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  186:    abort ();
+call    0 never executed
+    #####:  187:  o->left_quote = left_quote;
+    #####:  188:  o->right_quote = right_quote;
+    #####:  189:}
+        -:  190:
+        -:  191:/* Return quoting options for STYLE, with no extra quoting.  */
+        -:  192:static struct quoting_options /* NOT PURE!! */
+function quoting_options_from_style called 0 returned 0% blocks executed 0%
+    #####:  193:quoting_options_from_style (enum quoting_style style)
+        -:  194:{
+    #####:  195:  struct quoting_options o = { literal_quoting_style, 0, { 0 }, NULL, NULL };
+    #####:  196:  if (style == custom_quoting_style)
+branch  0 never executed
+branch  1 never executed
+    #####:  197:    abort ();
+call    0 never executed
+    #####:  198:  o.style = style;
+    #####:  199:  return o;
+        -:  200:}
+        -:  201:
+        -:  202:/* MSGID approximates a quotation mark.  Return its translation if it
+        -:  203:   has one; otherwise, return either it or "\"", depending on S.
+        -:  204:
+        -:  205:   S is either clocale_quoting_style or locale_quoting_style.  */
+        -:  206:static char const *
+function gettext_quote called 0 returned 0% blocks executed 0%
+    #####:  207:gettext_quote (char const *msgid, enum quoting_style s)
+        -:  208:{
+    #####:  209:  char const *translation = _(msgid);
+        -:  210:  char const *locale_code;
+        -:  211:
+    #####:  212:  if (translation != msgid)
+branch  0 never executed
+branch  1 never executed
+    #####:  213:    return translation;
+        -:  214:
+        -:  215:  /* For UTF-8 and GB-18030, use single quotes U+2018 and U+2019.
+        -:  216:     Here is a list of other locales that include U+2018 and U+2019:
+        -:  217:
+        -:  218:        ISO-8859-7   0xA1                 KOI8-T       0x91
+        -:  219:        CP869        0x8B                 CP874        0x91
+        -:  220:        CP932        0x81 0x65            CP936        0xA1 0xAE
+        -:  221:        CP949        0xA1 0xAE            CP950        0xA1 0xA5
+        -:  222:        CP1250       0x91                 CP1251       0x91
+        -:  223:        CP1252       0x91                 CP1253       0x91
+        -:  224:        CP1254       0x91                 CP1255       0x91
+        -:  225:        CP1256       0x91                 CP1257       0x91
+        -:  226:        EUC-JP       0xA1 0xC6            EUC-KR       0xA1 0xAE
+        -:  227:        EUC-TW       0xA1 0xE4            BIG5         0xA1 0xA5
+        -:  228:        BIG5-HKSCS   0xA1 0xA5            EUC-CN       0xA1 0xAE
+        -:  229:        GBK          0xA1 0xAE            Georgian-PS  0x91
+        -:  230:        PT154        0x91
+        -:  231:
+        -:  232:     None of these is still in wide use; using iconv is overkill.  */
+    #####:  233:  locale_code = locale_charset ();
+call    0 never executed
+    #####:  234:  if (STRCASEEQ (locale_code, "UTF-8", 'U','T','F','-','8',0,0,0,0))
+branch  0 never executed
+branch  1 never executed
+    #####:  235:    return msgid[0] == '`' ? "\xe2\x80\x98": "\xe2\x80\x99";
+branch  0 never executed
+branch  1 never executed
+    #####:  236:  if (STRCASEEQ (locale_code, "GB18030", 'G','B','1','8','0','3','0',0,0))
+branch  0 never executed
+branch  1 never executed
+    #####:  237:    return msgid[0] == '`' ? "\xa1\ae": "\xa1\xaf";
+branch  0 never executed
+branch  1 never executed
+        -:  238:
+    #####:  239:  return (s == clocale_quoting_style ? "\"" : "'");
+branch  0 never executed
+branch  1 never executed
+        -:  240:}
+        -:  241:
+        -:  242:/* Place into buffer BUFFER (of size BUFFERSIZE) a quoted version of
+        -:  243:   argument ARG (of size ARGSIZE), using QUOTING_STYLE, FLAGS, and
+        -:  244:   QUOTE_THESE_TOO to control quoting.
+        -:  245:   Terminate the output with a null character, and return the written
+        -:  246:   size of the output, not counting the terminating null.
+        -:  247:   If BUFFERSIZE is too small to store the output string, return the
+        -:  248:   value that would have been returned had BUFFERSIZE been large enough.
+        -:  249:   If ARGSIZE is SIZE_MAX, use the string length of the argument for ARGSIZE.
+        -:  250:
+        -:  251:   This function acts like quotearg_buffer (BUFFER, BUFFERSIZE, ARG,
+        -:  252:   ARGSIZE, O), except it breaks O into its component pieces and is
+        -:  253:   not careful about errno.  */
+        -:  254:
+        -:  255:static size_t
+function quotearg_buffer_restyled called 0 returned 0% blocks executed 0%
+    #####:  256:quotearg_buffer_restyled (char *buffer, size_t buffersize,
+        -:  257:                          char const *arg, size_t argsize,
+        -:  258:                          enum quoting_style quoting_style, int flags,
+        -:  259:                          unsigned int const *quote_these_too,
+        -:  260:                          char const *left_quote,
+        -:  261:                          char const *right_quote)
+        -:  262:{
+        -:  263:  size_t i;
+    #####:  264:  size_t len = 0;
+    #####:  265:  size_t orig_buffersize = 0;
+    #####:  266:  char const *quote_string = 0;
+    #####:  267:  size_t quote_string_len = 0;
+    #####:  268:  bool backslash_escapes = false;
+    #####:  269:  bool unibyte_locale = MB_CUR_MAX == 1;
+call    0 never executed
+    #####:  270:  bool elide_outer_quotes = (flags & QA_ELIDE_OUTER_QUOTES) != 0;
+    #####:  271:  bool pending_shell_escape_end = false;
+    #####:  272:  bool encountered_single_quote = false;
+    #####:  273:  bool all_c_and_shell_quote_compat = true;
+        -:  274:
+        -:  275:#define STORE(c) \
+        -:  276:    do \
+        -:  277:      { \
+        -:  278:        if (len < buffersize) \
+        -:  279:          buffer[len] = (c); \
+        -:  280:        len++; \
+        -:  281:      } \
+        -:  282:    while (0)
+        -:  283:
+        -:  284:#define START_ESC() \
+        -:  285:    do \
+        -:  286:      { \
+        -:  287:        if (elide_outer_quotes) \
+        -:  288:          goto force_outer_quoting_style; \
+        -:  289:        escaping = true; \
+        -:  290:        if (quoting_style == shell_always_quoting_style \
+        -:  291:            && ! pending_shell_escape_end) \
+        -:  292:          { \
+        -:  293:            STORE ('\''); \
+        -:  294:            STORE ('$'); \
+        -:  295:            STORE ('\''); \
+        -:  296:            pending_shell_escape_end = true; \
+        -:  297:          } \
+        -:  298:        STORE ('\\'); \
+        -:  299:      } \
+        -:  300:    while (0)
+        -:  301:
+        -:  302:#define END_ESC() \
+        -:  303:    do \
+        -:  304:      { \
+        -:  305:        if (pending_shell_escape_end && ! escaping) \
+        -:  306:          { \
+        -:  307:            STORE ('\''); \
+        -:  308:            STORE ('\''); \
+        -:  309:            pending_shell_escape_end = false; \
+        -:  310:          } \
+        -:  311:      } \
+        -:  312:    while (0)
+        -:  313:
+    #####:  314: process_input:
+        -:  315:
+    #####:  316:  switch (quoting_style)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+branch  7 never executed
+branch  8 never executed
+branch  9 never executed
+        -:  317:    {
+    #####:  318:    case c_maybe_quoting_style:
+    #####:  319:      quoting_style = c_quoting_style;
+    #####:  320:      elide_outer_quotes = true;
+        -:  321:      FALLTHROUGH;
+    #####:  322:    case c_quoting_style:
+    #####:  323:      if (!elide_outer_quotes)
+branch  0 never executed
+branch  1 never executed
+    #####:  324:        STORE ('"');
+branch  0 never executed
+branch  1 never executed
+    #####:  325:      backslash_escapes = true;
+    #####:  326:      quote_string = "\"";
+    #####:  327:      quote_string_len = 1;
+    #####:  328:      break;
+        -:  329:
+    #####:  330:    case escape_quoting_style:
+    #####:  331:      backslash_escapes = true;
+    #####:  332:      elide_outer_quotes = false;
+    #####:  333:      break;
+        -:  334:
+    #####:  335:    case locale_quoting_style:
+        -:  336:    case clocale_quoting_style:
+        -:  337:    case custom_quoting_style:
+        -:  338:      {
+    #####:  339:        if (quoting_style != custom_quoting_style)
+branch  0 never executed
+branch  1 never executed
+        -:  340:          {
+        -:  341:            /* TRANSLATORS:
+        -:  342:               Get translations for open and closing quotation marks.
+        -:  343:               The message catalog should translate "`" to a left
+        -:  344:               quotation mark suitable for the locale, and similarly for
+        -:  345:               "'".  For example, a French Unicode local should translate
+        -:  346:               these to U+00AB (LEFT-POINTING DOUBLE ANGLE
+        -:  347:               QUOTATION MARK), and U+00BB (RIGHT-POINTING DOUBLE ANGLE
+        -:  348:               QUOTATION MARK), respectively.
+        -:  349:
+        -:  350:               If the catalog has no translation, we will try to
+        -:  351:               use Unicode U+2018 (LEFT SINGLE QUOTATION MARK) and
+        -:  352:               Unicode U+2019 (RIGHT SINGLE QUOTATION MARK).  If the
+        -:  353:               current locale is not Unicode, locale_quoting_style
+        -:  354:               will quote 'like this', and clocale_quoting_style will
+        -:  355:               quote "like this".  You should always include translations
+        -:  356:               for "`" and "'" even if U+2018 and U+2019 are appropriate
+        -:  357:               for your locale.
+        -:  358:
+        -:  359:               If you don't know what to put here, please see
+        -:  360:               <https://en.wikipedia.org/wiki/Quotation_marks_in_other_languages>
+        -:  361:               and use glyphs suitable for your language.  */
+    #####:  362:            left_quote = gettext_quote (N_("`"), quoting_style);
+call    0 never executed
+    #####:  363:            right_quote = gettext_quote (N_("'"), quoting_style);
+call    0 never executed
+        -:  364:          }
+    #####:  365:        if (!elide_outer_quotes)
+branch  0 never executed
+branch  1 never executed
+    #####:  366:          for (quote_string = left_quote; *quote_string; quote_string++)
+branch  0 never executed
+branch  1 never executed
+    #####:  367:            STORE (*quote_string);
+branch  0 never executed
+branch  1 never executed
+    #####:  368:        backslash_escapes = true;
+    #####:  369:        quote_string = right_quote;
+    #####:  370:        quote_string_len = strlen (quote_string);
+        -:  371:      }
+    #####:  372:      break;
+        -:  373:
+    #####:  374:    case shell_escape_quoting_style:
+    #####:  375:      backslash_escapes = true;
+        -:  376:      FALLTHROUGH;
+    #####:  377:    case shell_quoting_style:
+    #####:  378:      elide_outer_quotes = true;
+        -:  379:      FALLTHROUGH;
+    #####:  380:    case shell_escape_always_quoting_style:
+    #####:  381:      if (!elide_outer_quotes)
+branch  0 never executed
+branch  1 never executed
+    #####:  382:        backslash_escapes = true;
+        -:  383:      FALLTHROUGH;
+        -:  384:    case shell_always_quoting_style:
+    #####:  385:      quoting_style = shell_always_quoting_style;
+    #####:  386:      if (!elide_outer_quotes)
+branch  0 never executed
+branch  1 never executed
+    #####:  387:        STORE ('\'');
+branch  0 never executed
+branch  1 never executed
+    #####:  388:      quote_string = "'";
+    #####:  389:      quote_string_len = 1;
+    #####:  390:      break;
+        -:  391:
+    #####:  392:    case literal_quoting_style:
+    #####:  393:      elide_outer_quotes = false;
+    #####:  394:      break;
+        -:  395:
+    #####:  396:    default:
+    #####:  397:      abort ();
+call    0 never executed
+        -:  398:    }
+        -:  399:
+    #####:  400:  for (i = 0;  ! (argsize == SIZE_MAX ? arg[i] == '\0' : i == argsize);  i++)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  401:    {
+        -:  402:      unsigned char c;
+        -:  403:      unsigned char esc;
+    #####:  404:      bool is_right_quote = false;
+    #####:  405:      bool escaping = false;
+    #####:  406:      bool c_and_shell_quote_compat = false;
+        -:  407:
+    #####:  408:      if (backslash_escapes
+branch  0 never executed
+branch  1 never executed
+    #####:  409:          && quoting_style != shell_always_quoting_style
+branch  0 never executed
+branch  1 never executed
+    #####:  410:          && quote_string_len
+branch  0 never executed
+branch  1 never executed
+    #####:  411:          && (i + quote_string_len
+branch  0 never executed
+branch  1 never executed
+    #####:  412:              <= (argsize == SIZE_MAX && 1 < quote_string_len
+branch  0 never executed
+branch  1 never executed
+        -:  413:                  /* Use strlen only if we must: when argsize is SIZE_MAX,
+        -:  414:                     and when the quote string is more than 1 byte long.
+        -:  415:                     If we do call strlen, save the result.  */
+    #####:  416:                  ? (argsize = strlen (arg)) : argsize))
+branch  0 never executed
+branch  1 never executed
+    #####:  417:          && memcmp (arg + i, quote_string, quote_string_len) == 0)
+branch  0 never executed
+branch  1 never executed
+        -:  418:        {
+    #####:  419:          if (elide_outer_quotes)
+branch  0 never executed
+branch  1 never executed
+    #####:  420:            goto force_outer_quoting_style;
+    #####:  421:          is_right_quote = true;
+        -:  422:        }
+        -:  423:
+    #####:  424:      c = arg[i];
+    #####:  425:      switch (c)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+branch  7 never executed
+branch  8 never executed
+branch  9 never executed
+branch 10 never executed
+branch 11 never executed
+branch 12 never executed
+branch 13 never executed
+branch 14 never executed
+branch 15 never executed
+branch 16 never executed
+        -:  426:        {
+    #####:  427:        case '\0':
+    #####:  428:          if (backslash_escapes)
+branch  0 never executed
+branch  1 never executed
+        -:  429:            {
+    #####:  430:              START_ESC ();
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+branch  7 never executed
+branch  8 never executed
+branch  9 never executed
+branch 10 never executed
+branch 11 never executed
+branch 12 never executed
+branch 13 never executed
+        -:  431:              /* If quote_string were to begin with digits, we'd need to
+        -:  432:                 test for the end of the arg as well.  However, it's
+        -:  433:                 hard to imagine any locale that would use digits in
+        -:  434:                 quotes, and set_custom_quoting is documented not to
+        -:  435:                 accept them.  Use only a single \0 with shell-escape
+        -:  436:                 as currently digits are not printed within $'...'  */
+    #####:  437:              if (quoting_style != shell_always_quoting_style
+branch  0 never executed
+branch  1 never executed
+    #####:  438:                  && i + 1 < argsize && '0' <= arg[i + 1] && arg[i + 1] <= '9')
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+        -:  439:                {
+    #####:  440:                  STORE ('0');
+branch  0 never executed
+branch  1 never executed
+    #####:  441:                  STORE ('0');
+branch  0 never executed
+branch  1 never executed
+        -:  442:                }
+    #####:  443:              c = '0';
+        -:  444:              /* We don't have to worry that this last '0' will be
+        -:  445:                 backslash-escaped because, again, quote_string should
+        -:  446:                 not start with it and because quote_these_too is
+        -:  447:                 documented as not accepting it.  */
+        -:  448:            }
+    #####:  449:          else if (flags & QA_ELIDE_NULL_BYTES)
+branch  0 never executed
+branch  1 never executed
+    #####:  450:            continue;
+    #####:  451:          break;
+        -:  452:
+    #####:  453:        case '?':
+    #####:  454:          switch (quoting_style)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+        -:  455:            {
+    #####:  456:            case shell_always_quoting_style:
+    #####:  457:              if (elide_outer_quotes)
+branch  0 never executed
+branch  1 never executed
+    #####:  458:                goto force_outer_quoting_style;
+    #####:  459:              break;
+        -:  460:
+    #####:  461:            case c_quoting_style:
+    #####:  462:              if ((flags & QA_SPLIT_TRIGRAPHS)
+branch  0 never executed
+branch  1 never executed
+    #####:  463:                  && i + 2 < argsize && arg[i + 1] == '?')
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  464:                switch (arg[i + 2])
+branch  0 never executed
+branch  1 never executed
+        -:  465:                  {
+    #####:  466:                  case '!': case '\'':
+        -:  467:                  case '(': case ')': case '-': case '/':
+        -:  468:                  case '<': case '=': case '>':
+        -:  469:                    /* Escape the second '?' in what would otherwise be
+        -:  470:                       a trigraph.  */
+    #####:  471:                    if (elide_outer_quotes)
+branch  0 never executed
+branch  1 never executed
+    #####:  472:                      goto force_outer_quoting_style;
+    #####:  473:                    c = arg[i + 2];
+    #####:  474:                    i += 2;
+    #####:  475:                    STORE ('?');
+branch  0 never executed
+branch  1 never executed
+    #####:  476:                    STORE ('"');
+branch  0 never executed
+branch  1 never executed
+    #####:  477:                    STORE ('"');
+branch  0 never executed
+branch  1 never executed
+    #####:  478:                    STORE ('?');
+branch  0 never executed
+branch  1 never executed
+    #####:  479:                    break;
+        -:  480:
+    #####:  481:                  default:
+    #####:  482:                    break;
+        -:  483:                  }
+    #####:  484:              break;
+        -:  485:
+    #####:  486:            default:
+    #####:  487:              break;
+        -:  488:            }
+    #####:  489:          break;
+        -:  490:
+    #####:  491:        case '\a': esc = 'a'; goto c_escape;
+    #####:  492:        case '\b': esc = 'b'; goto c_escape;
+    #####:  493:        case '\f': esc = 'f'; goto c_escape;
+    #####:  494:        case '\n': esc = 'n'; goto c_and_shell_escape;
+    #####:  495:        case '\r': esc = 'r'; goto c_and_shell_escape;
+    #####:  496:        case '\t': esc = 't'; goto c_and_shell_escape;
+    #####:  497:        case '\v': esc = 'v'; goto c_escape;
+    #####:  498:        case '\\': esc = c;
+        -:  499:          /* Never need to escape '\' in shell case.  */
+    #####:  500:          if (quoting_style == shell_always_quoting_style)
+branch  0 never executed
+branch  1 never executed
+        -:  501:            {
+    #####:  502:              if (elide_outer_quotes)
+branch  0 never executed
+branch  1 never executed
+    #####:  503:                goto force_outer_quoting_style;
+    #####:  504:              goto store_c;
+        -:  505:            }
+        -:  506:
+        -:  507:          /* No need to escape the escape if we are trying to elide
+        -:  508:             outer quotes and nothing else is problematic.  */
+    #####:  509:          if (backslash_escapes && elide_outer_quotes && quote_string_len)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+    #####:  510:            goto store_c;
+        -:  511:
+    #####:  512:        c_and_shell_escape:
+    #####:  513:          if (quoting_style == shell_always_quoting_style
+branch  0 never executed
+branch  1 never executed
+    #####:  514:              && elide_outer_quotes)
+branch  0 never executed
+branch  1 never executed
+    #####:  515:            goto force_outer_quoting_style;
+        -:  516:          /* fall through */
+    #####:  517:        c_escape:
+    #####:  518:          if (backslash_escapes)
+branch  0 never executed
+branch  1 never executed
+        -:  519:            {
+    #####:  520:              c = esc;
+    #####:  521:              goto store_escape;
+        -:  522:            }
+    #####:  523:          break;
+        -:  524:
+    #####:  525:        case '{': case '}': /* sometimes special if isolated */
+    #####:  526:          if (! (argsize == SIZE_MAX ? arg[1] == '\0' : argsize == 1))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  527:            break;
+        -:  528:          FALLTHROUGH;
+        -:  529:        case '#': case '~':
+    #####:  530:          if (i != 0)
+branch  0 never executed
+branch  1 never executed
+    #####:  531:            break;
+        -:  532:          FALLTHROUGH;
+        -:  533:        case ' ':
+    #####:  534:          c_and_shell_quote_compat = true;
+        -:  535:          FALLTHROUGH;
+    #####:  536:        case '!': /* special in bash */
+        -:  537:        case '"': case '$': case '&':
+        -:  538:        case '(': case ')': case '*': case ';':
+        -:  539:        case '<':
+        -:  540:        case '=': /* sometimes special in 0th or (with "set -k") later args */
+        -:  541:        case '>': case '[':
+        -:  542:        case '^': /* special in old /bin/sh, e.g. SunOS 4.1.4 */
+        -:  543:        case '`': case '|':
+        -:  544:          /* A shell special character.  In theory, '$' and '`' could
+        -:  545:             be the first bytes of multibyte characters, which means
+        -:  546:             we should check them with mbrtowc, but in practice this
+        -:  547:             doesn't happen so it's not worth worrying about.  */
+    #####:  548:          if (quoting_style == shell_always_quoting_style
+branch  0 never executed
+branch  1 never executed
+    #####:  549:              && elide_outer_quotes)
+branch  0 never executed
+branch  1 never executed
+    #####:  550:            goto force_outer_quoting_style;
+    #####:  551:          break;
+        -:  552:
+    #####:  553:        case '\'':
+    #####:  554:          encountered_single_quote = true;
+    #####:  555:          c_and_shell_quote_compat = true;
+    #####:  556:          if (quoting_style == shell_always_quoting_style)
+branch  0 never executed
+branch  1 never executed
+        -:  557:            {
+    #####:  558:              if (elide_outer_quotes)
+branch  0 never executed
+branch  1 never executed
+    #####:  559:                goto force_outer_quoting_style;
+        -:  560:
+    #####:  561:              if (buffersize && ! orig_buffersize)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  562:                {
+        -:  563:                  /* Just scan string to see if supports a more concise
+        -:  564:                     representation, rather than writing a longer string
+        -:  565:                     but returning the length of the more concise form.  */
+    #####:  566:                  orig_buffersize = buffersize;
+    #####:  567:                  buffersize = 0;
+        -:  568:                }
+        -:  569:
+    #####:  570:              STORE ('\'');
+branch  0 never executed
+branch  1 never executed
+    #####:  571:              STORE ('\\');
+branch  0 never executed
+branch  1 never executed
+    #####:  572:              STORE ('\'');
+branch  0 never executed
+branch  1 never executed
+    #####:  573:              pending_shell_escape_end = false;
+        -:  574:            }
+    #####:  575:          break;
+        -:  576:
+    #####:  577:        case '%': case '+': case ',': case '-': case '.': case '/':
+        -:  578:        case '0': case '1': case '2': case '3': case '4': case '5':
+        -:  579:        case '6': case '7': case '8': case '9': case ':':
+        -:  580:        case 'A': case 'B': case 'C': case 'D': case 'E': case 'F':
+        -:  581:        case 'G': case 'H': case 'I': case 'J': case 'K': case 'L':
+        -:  582:        case 'M': case 'N': case 'O': case 'P': case 'Q': case 'R':
+        -:  583:        case 'S': case 'T': case 'U': case 'V': case 'W': case 'X':
+        -:  584:        case 'Y': case 'Z': case ']': case '_': case 'a': case 'b':
+        -:  585:        case 'c': case 'd': case 'e': case 'f': case 'g': case 'h':
+        -:  586:        case 'i': case 'j': case 'k': case 'l': case 'm': case 'n':
+        -:  587:        case 'o': case 'p': case 'q': case 'r': case 's': case 't':
+        -:  588:        case 'u': case 'v': case 'w': case 'x': case 'y': case 'z':
+        -:  589:          /* These characters don't cause problems, no matter what the
+        -:  590:             quoting style is.  They cannot start multibyte sequences.
+        -:  591:             A digit or a special letter would cause trouble if it
+        -:  592:             appeared at the beginning of quote_string because we'd then
+        -:  593:             escape by prepending a backslash.  However, it's hard to
+        -:  594:             imagine any locale that would use digits or letters as
+        -:  595:             quotes, and set_custom_quoting is documented not to accept
+        -:  596:             them.  Also, a digit or a special letter would cause
+        -:  597:             trouble if it appeared in quote_these_too, but that's also
+        -:  598:             documented as not accepting them.  */
+    #####:  599:          c_and_shell_quote_compat = true;
+    #####:  600:          break;
+        -:  601:
+    #####:  602:        default:
+        -:  603:          /* If we have a multibyte sequence, copy it until we reach
+        -:  604:             its end, find an error, or come back to the initial shift
+        -:  605:             state.  For C-like styles, if the sequence has
+        -:  606:             unprintable characters, escape the whole sequence, since
+        -:  607:             we can't easily escape single characters within it.  */
+        -:  608:          {
+        -:  609:            /* Length of multibyte sequence found so far.  */
+        -:  610:            size_t m;
+        -:  611:
+        -:  612:            bool printable;
+        -:  613:
+    #####:  614:            if (unibyte_locale)
+branch  0 never executed
+branch  1 never executed
+        -:  615:              {
+    #####:  616:                m = 1;
+    #####:  617:                printable = isprint (c) != 0;
+        -:  618:              }
+        -:  619:            else
+        -:  620:              {
+        -:  621:                mbstate_t mbstate;
+    #####:  622:                memset (&mbstate, 0, sizeof mbstate);
+        -:  623:
+    #####:  624:                m = 0;
+    #####:  625:                printable = true;
+    #####:  626:                if (argsize == SIZE_MAX)
+branch  0 never executed
+branch  1 never executed
+    #####:  627:                  argsize = strlen (arg);
+        -:  628:
+        -:  629:                do
+        -:  630:                  {
+        -:  631:                    wchar_t w;
+    #####:  632:                    size_t bytes = mbrtowc (&w, &arg[i + m],
+call    0 never executed
+    #####:  633:                                            argsize - (i + m), &mbstate);
+    #####:  634:                    if (bytes == 0)
+branch  0 never executed
+branch  1 never executed
+    #####:  635:                      break;
+    #####:  636:                    else if (bytes == (size_t) -1)
+branch  0 never executed
+branch  1 never executed
+        -:  637:                      {
+    #####:  638:                        printable = false;
+    #####:  639:                        break;
+        -:  640:                      }
+    #####:  641:                    else if (bytes == (size_t) -2)
+branch  0 never executed
+branch  1 never executed
+        -:  642:                      {
+    #####:  643:                        printable = false;
+    #####:  644:                        while (i + m < argsize && arg[i + m])
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  645:                          m++;
+    #####:  646:                        break;
+        -:  647:                      }
+        -:  648:                    else
+        -:  649:                      {
+        -:  650:                        /* Work around a bug with older shells that "see" a '\'
+        -:  651:                           that is really the 2nd byte of a multibyte character.
+        -:  652:                           In practice the problem is limited to ASCII
+        -:  653:                           chars >= '@' that are shell special chars.  */
+    #####:  654:                        if ('[' == 0x5b && elide_outer_quotes
+branch  0 never executed
+branch  1 never executed
+    #####:  655:                            && quoting_style == shell_always_quoting_style)
+branch  0 never executed
+branch  1 never executed
+        -:  656:                          {
+        -:  657:                            size_t j;
+    #####:  658:                            for (j = 1; j < bytes; j++)
+branch  0 never executed
+branch  1 never executed
+    #####:  659:                              switch (arg[i + m + j])
+branch  0 never executed
+branch  1 never executed
+        -:  660:                                {
+    #####:  661:                                case '[': case '\\': case '^':
+        -:  662:                                case '`': case '|':
+    #####:  663:                                  goto force_outer_quoting_style;
+        -:  664:
+    #####:  665:                                default:
+    #####:  666:                                  break;
+        -:  667:                                }
+        -:  668:                          }
+        -:  669:
+    #####:  670:                        if (! iswprint (w))
+branch  0 never executed
+branch  1 never executed
+    #####:  671:                          printable = false;
+    #####:  672:                        m += bytes;
+        -:  673:                      }
+        -:  674:                  }
+    #####:  675:                while (! mbsinit (&mbstate));
+branch  0 never executed
+branch  1 never executed
+        -:  676:              }
+        -:  677:
+    #####:  678:            c_and_shell_quote_compat = printable;
+        -:  679:
+    #####:  680:            if (1 < m || (backslash_escapes && ! printable))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+        -:  681:              {
+        -:  682:                /* Output a multibyte sequence, or an escaped
+        -:  683:                   unprintable unibyte character.  */
+    #####:  684:                size_t ilim = i + m;
+        -:  685:
+        -:  686:                for (;;)
+        -:  687:                  {
+    #####:  688:                    if (backslash_escapes && ! printable)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  689:                      {
+    #####:  690:                        START_ESC ();
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+branch  7 never executed
+branch  8 never executed
+branch  9 never executed
+branch 10 never executed
+branch 11 never executed
+branch 12 never executed
+branch 13 never executed
+    #####:  691:                        STORE ('0' + (c >> 6));
+branch  0 never executed
+branch  1 never executed
+    #####:  692:                        STORE ('0' + ((c >> 3) & 7));
+branch  0 never executed
+branch  1 never executed
+    #####:  693:                        c = '0' + (c & 7);
+        -:  694:                      }
+    #####:  695:                    else if (is_right_quote)
+branch  0 never executed
+branch  1 never executed
+        -:  696:                      {
+    #####:  697:                        STORE ('\\');
+branch  0 never executed
+branch  1 never executed
+    #####:  698:                        is_right_quote = false;
+        -:  699:                      }
+    #####:  700:                    if (ilim <= i + 1)
+branch  0 never executed
+branch  1 never executed
+    #####:  701:                      break;
+    #####:  702:                    END_ESC ();
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+branch  7 never executed
+    #####:  703:                    STORE (c);
+branch  0 never executed
+branch  1 never executed
+    #####:  704:                    c = arg[++i];
+        -:  705:                  }
+        -:  706:
+    #####:  707:                goto store_c;
+        -:  708:              }
+        -:  709:          }
+        -:  710:        }
+        -:  711:
+    #####:  712:      if (! (((backslash_escapes && quoting_style != shell_always_quoting_style)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+    #####:  713:              || elide_outer_quotes)
+branch  0 never executed
+branch  1 never executed
+    #####:  714:             && quote_these_too
+branch  0 never executed
+branch  1 never executed
+    #####:  715:             && quote_these_too[c / INT_BITS] >> (c % INT_BITS) & 1)
+    #####:  716:          && !is_right_quote)
+branch  0 never executed
+branch  1 never executed
+    #####:  717:        goto store_c;
+        -:  718:
+    #####:  719:    store_escape:
+    #####:  720:      START_ESC ();
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+branch  7 never executed
+branch  8 never executed
+branch  9 never executed
+branch 10 never executed
+branch 11 never executed
+branch 12 never executed
+branch 13 never executed
+        -:  721:
+    #####:  722:    store_c:
+    #####:  723:      END_ESC ();
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+branch  7 never executed
+    #####:  724:      STORE (c);
+branch  0 never executed
+branch  1 never executed
+        -:  725:
+    #####:  726:      if (! c_and_shell_quote_compat)
+branch  0 never executed
+branch  1 never executed
+    #####:  727:        all_c_and_shell_quote_compat = false;
+        -:  728:    }
+        -:  729:
+    #####:  730:  if (len == 0 && quoting_style == shell_always_quoting_style
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  731:      && elide_outer_quotes)
+branch  0 never executed
+branch  1 never executed
+    #####:  732:    goto force_outer_quoting_style;
+        -:  733:
+        -:  734:  /* Single shell quotes (') are commonly enough used as an apostrophe,
+        -:  735:     that we attempt to minimize the quoting in this case.  Note itʼs
+        -:  736:     better to use the apostrophe modifier "\u02BC" if possible, as that
+        -:  737:     renders better and works with the word match regex \W+ etc.  */
+    #####:  738:  if (quoting_style == shell_always_quoting_style && ! elide_outer_quotes
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  739:      && encountered_single_quote)
+branch  0 never executed
+branch  1 never executed
+        -:  740:    {
+    #####:  741:      if (all_c_and_shell_quote_compat)
+branch  0 never executed
+branch  1 never executed
+    #####:  742:        return quotearg_buffer_restyled (buffer, orig_buffersize, arg, argsize,
+call    0 never executed
+        -:  743:                                         c_quoting_style,
+        -:  744:                                         flags, quote_these_too,
+        -:  745:                                         left_quote, right_quote);
+    #####:  746:      else if (! buffersize && orig_buffersize)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  747:        {
+        -:  748:          /* Disable read-only scan, and reprocess to write quoted string.  */
+    #####:  749:          buffersize = orig_buffersize;
+    #####:  750:          len = 0;
+    #####:  751:          goto process_input;
+        -:  752:        }
+        -:  753:    }
+        -:  754:
+    #####:  755:  if (quote_string && !elide_outer_quotes)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  756:    for (; *quote_string; quote_string++)
+branch  0 never executed
+branch  1 never executed
+    #####:  757:      STORE (*quote_string);
+branch  0 never executed
+branch  1 never executed
+        -:  758:
+    #####:  759:  if (len < buffersize)
+branch  0 never executed
+branch  1 never executed
+    #####:  760:    buffer[len] = '\0';
+    #####:  761:  return len;
+        -:  762:
+    #####:  763: force_outer_quoting_style:
+        -:  764:  /* Don't reuse quote_these_too, since the addition of outer quotes
+        -:  765:     sufficiently quotes the specified characters.  */
+    #####:  766:  if (quoting_style == shell_always_quoting_style && backslash_escapes)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  767:    quoting_style = shell_escape_always_quoting_style;
+    #####:  768:  return quotearg_buffer_restyled (buffer, buffersize, arg, argsize,
+call    0 never executed
+        -:  769:                                   quoting_style,
+        -:  770:                                   flags & ~QA_ELIDE_OUTER_QUOTES, NULL,
+        -:  771:                                   left_quote, right_quote);
+        -:  772:}
+        -:  773:
+        -:  774:/* Place into buffer BUFFER (of size BUFFERSIZE) a quoted version of
+        -:  775:   argument ARG (of size ARGSIZE), using O to control quoting.
+        -:  776:   If O is null, use the default.
+        -:  777:   Terminate the output with a null character, and return the written
+        -:  778:   size of the output, not counting the terminating null.
+        -:  779:   If BUFFERSIZE is too small to store the output string, return the
+        -:  780:   value that would have been returned had BUFFERSIZE been large enough.
+        -:  781:   If ARGSIZE is SIZE_MAX, use the string length of the argument for
+        -:  782:   ARGSIZE.  */
+        -:  783:size_t
+function quotearg_buffer called 0 returned 0% blocks executed 0%
+    #####:  784:quotearg_buffer (char *buffer, size_t buffersize,
+        -:  785:                 char const *arg, size_t argsize,
+        -:  786:                 struct quoting_options const *o)
+        -:  787:{
+    #####:  788:  struct quoting_options const *p = o ? o : &default_quoting_options;
+branch  0 never executed
+branch  1 never executed
+    #####:  789:  int e = errno;
+    #####:  790:  size_t r = quotearg_buffer_restyled (buffer, buffersize, arg, argsize,
+call    0 never executed
+    #####:  791:                                       p->style, p->flags, p->quote_these_too,
+        -:  792:                                       p->left_quote, p->right_quote);
+    #####:  793:  errno = e;
+    #####:  794:  return r;
+        -:  795:}
+        -:  796:
+        -:  797:/* Equivalent to quotearg_alloc (ARG, ARGSIZE, NULL, O).  */
+        -:  798:char *
+function quotearg_alloc called 0 returned 0% blocks executed 0%
+    #####:  799:quotearg_alloc (char const *arg, size_t argsize,
+        -:  800:                struct quoting_options const *o)
+        -:  801:{
+    #####:  802:  return quotearg_alloc_mem (arg, argsize, NULL, o);
+call    0 never executed
+        -:  803:}
+        -:  804:
+        -:  805:/* Like quotearg_buffer (..., ARG, ARGSIZE, O), except return newly
+        -:  806:   allocated storage containing the quoted string, and store the
+        -:  807:   resulting size into *SIZE, if non-NULL.  The result can contain
+        -:  808:   embedded null bytes only if ARGSIZE is not SIZE_MAX, SIZE is not
+        -:  809:   NULL, and set_quoting_flags has not set the null byte elision
+        -:  810:   flag.  */
+        -:  811:char *
+function quotearg_alloc_mem called 0 returned 0% blocks executed 0%
+    #####:  812:quotearg_alloc_mem (char const *arg, size_t argsize, size_t *size,
+        -:  813:                    struct quoting_options const *o)
+        -:  814:{
+    #####:  815:  struct quoting_options const *p = o ? o : &default_quoting_options;
+branch  0 never executed
+branch  1 never executed
+    #####:  816:  int e = errno;
+        -:  817:  /* Elide embedded null bytes if we can't return a size.  */
+    #####:  818:  int flags = p->flags | (size ? 0 : QA_ELIDE_NULL_BYTES);
+    #####:  819:  size_t bufsize = quotearg_buffer_restyled (0, 0, arg, argsize, p->style,
+call    0 never executed
+    #####:  820:                                             flags, p->quote_these_too,
+        -:  821:                                             p->left_quote,
+        -:  822:                                             p->right_quote) + 1;
+    #####:  823:  char *buf = xcharalloc (bufsize);
+call    0 never executed
+    #####:  824:  quotearg_buffer_restyled (buf, bufsize, arg, argsize, p->style, flags,
+call    0 never executed
+    #####:  825:                            p->quote_these_too,
+        -:  826:                            p->left_quote, p->right_quote);
+    #####:  827:  errno = e;
+    #####:  828:  if (size)
+branch  0 never executed
+branch  1 never executed
+    #####:  829:    *size = bufsize - 1;
+    #####:  830:  return buf;
+        -:  831:}
+        -:  832:
+        -:  833:/* A storage slot with size and pointer to a value.  */
+        -:  834:struct slotvec
+        -:  835:{
+        -:  836:  size_t size;
+        -:  837:  char *val;
+        -:  838:};
+        -:  839:
+        -:  840:/* Preallocate a slot 0 buffer, so that the caller can always quote
+        -:  841:   one small component of a "memory exhausted" message in slot 0.  */
+        -:  842:static char slot0[256];
+        -:  843:static int nslots = 1;
+        -:  844:static struct slotvec slotvec0 = {sizeof slot0, slot0};
+        -:  845:static struct slotvec *slotvec = &slotvec0;
+        -:  846:
+        -:  847:void
+function quotearg_free called 0 returned 0% blocks executed 0%
+    #####:  848:quotearg_free (void)
+        -:  849:{
+    #####:  850:  struct slotvec *sv = slotvec;
+        -:  851:  int i;
+    #####:  852:  for (i = 1; i < nslots; i++)
+branch  0 never executed
+branch  1 never executed
+    #####:  853:    free (sv[i].val);
+    #####:  854:  if (sv[0].val != slot0)
+branch  0 never executed
+branch  1 never executed
+        -:  855:    {
+    #####:  856:      free (sv[0].val);
+    #####:  857:      slotvec0.size = sizeof slot0;
+    #####:  858:      slotvec0.val = slot0;
+        -:  859:    }
+    #####:  860:  if (sv != &slotvec0)
+branch  0 never executed
+branch  1 never executed
+        -:  861:    {
+    #####:  862:      free (sv);
+    #####:  863:      slotvec = &slotvec0;
+        -:  864:    }
+    #####:  865:  nslots = 1;
+    #####:  866:}
+        -:  867:
+        -:  868:/* Use storage slot N to return a quoted version of argument ARG.
+        -:  869:   ARG is of size ARGSIZE, but if that is SIZE_MAX, ARG is a
+        -:  870:   null-terminated string.
+        -:  871:   OPTIONS specifies the quoting options.
+        -:  872:   The returned value points to static storage that can be
+        -:  873:   reused by the next call to this function with the same value of N.
+        -:  874:   N must be nonnegative.  N is deliberately declared with type "int"
+        -:  875:   to allow for future extensions (using negative values).  */
+        -:  876:static char *
+function quotearg_n_options called 0 returned 0% blocks executed 0%
+    #####:  877:quotearg_n_options (int n, char const *arg, size_t argsize,
+        -:  878:                    struct quoting_options const *options)
+        -:  879:{
+    #####:  880:  int e = errno;
+        -:  881:
+    #####:  882:  struct slotvec *sv = slotvec;
+        -:  883:
+    #####:  884:  if (n < 0)
+branch  0 never executed
+branch  1 never executed
+    #####:  885:    abort ();
+call    0 never executed
+        -:  886:
+    #####:  887:  if (nslots <= n)
+branch  0 never executed
+branch  1 never executed
+        -:  888:    {
+    #####:  889:      bool preallocated = (sv == &slotvec0);
+    #####:  890:      int nmax = MIN (INT_MAX, MIN (PTRDIFF_MAX, SIZE_MAX) / sizeof *sv) - 1;
+        -:  891:
+    #####:  892:      if (nmax < n)
+branch  0 never executed
+branch  1 never executed
+    #####:  893:        xalloc_die ();
+call    0 never executed
+        -:  894:
+    #####:  895:      slotvec = sv = xrealloc (preallocated ? NULL : sv, (n + 1) * sizeof *sv);
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+    #####:  896:      if (preallocated)
+branch  0 never executed
+branch  1 never executed
+    #####:  897:        *sv = slotvec0;
+    #####:  898:      memset (sv + nslots, 0, (n + 1 - nslots) * sizeof *sv);
+    #####:  899:      nslots = n + 1;
+        -:  900:    }
+        -:  901:
+        -:  902:  {
+    #####:  903:    size_t size = sv[n].size;
+    #####:  904:    char *val = sv[n].val;
+        -:  905:    /* Elide embedded null bytes since we don't return a size.  */
+    #####:  906:    int flags = options->flags | QA_ELIDE_NULL_BYTES;
+    #####:  907:    size_t qsize = quotearg_buffer_restyled (val, size, arg, argsize,
+call    0 never executed
+        -:  908:                                             options->style, flags,
+    #####:  909:                                             options->quote_these_too,
+        -:  910:                                             options->left_quote,
+        -:  911:                                             options->right_quote);
+        -:  912:
+    #####:  913:    if (size <= qsize)
+branch  0 never executed
+branch  1 never executed
+        -:  914:      {
+    #####:  915:        sv[n].size = size = qsize + 1;
+    #####:  916:        if (val != slot0)
+branch  0 never executed
+branch  1 never executed
+    #####:  917:          free (val);
+    #####:  918:        sv[n].val = val = xcharalloc (size);
+call    0 never executed
+    #####:  919:        quotearg_buffer_restyled (val, size, arg, argsize, options->style,
+call    0 never executed
+    #####:  920:                                  flags, options->quote_these_too,
+        -:  921:                                  options->left_quote,
+        -:  922:                                  options->right_quote);
+        -:  923:      }
+        -:  924:
+    #####:  925:    errno = e;
+    #####:  926:    return val;
+        -:  927:  }
+        -:  928:}
+        -:  929:
+        -:  930:char *
+function quotearg_n called 0 returned 0% blocks executed 0%
+    #####:  931:quotearg_n (int n, char const *arg)
+        -:  932:{
+    #####:  933:  return quotearg_n_options (n, arg, SIZE_MAX, &default_quoting_options);
+call    0 never executed
+        -:  934:}
+        -:  935:
+        -:  936:char *
+function quotearg_n_mem called 0 returned 0% blocks executed 0%
+    #####:  937:quotearg_n_mem (int n, char const *arg, size_t argsize)
+        -:  938:{
+    #####:  939:  return quotearg_n_options (n, arg, argsize, &default_quoting_options);
+call    0 never executed
+        -:  940:}
+        -:  941:
+        -:  942:char *
+function quotearg called 0 returned 0% blocks executed 0%
+    #####:  943:quotearg (char const *arg)
+        -:  944:{
+    #####:  945:  return quotearg_n (0, arg);
+call    0 never executed
+        -:  946:}
+        -:  947:
+        -:  948:char *
+function quotearg_mem called 0 returned 0% blocks executed 0%
+    #####:  949:quotearg_mem (char const *arg, size_t argsize)
+        -:  950:{
+    #####:  951:  return quotearg_n_mem (0, arg, argsize);
+call    0 never executed
+        -:  952:}
+        -:  953:
+        -:  954:char *
+function quotearg_n_style called 0 returned 0% blocks executed 0%
+    #####:  955:quotearg_n_style (int n, enum quoting_style s, char const *arg)
+        -:  956:{
+    #####:  957:  struct quoting_options const o = quoting_options_from_style (s);
+call    0 never executed
+    #####:  958:  return quotearg_n_options (n, arg, SIZE_MAX, &o);
+call    0 never executed
+        -:  959:}
+        -:  960:
+        -:  961:char *
+function quotearg_n_style_mem called 0 returned 0% blocks executed 0%
+    #####:  962:quotearg_n_style_mem (int n, enum quoting_style s,
+        -:  963:                      char const *arg, size_t argsize)
+        -:  964:{
+    #####:  965:  struct quoting_options const o = quoting_options_from_style (s);
+call    0 never executed
+    #####:  966:  return quotearg_n_options (n, arg, argsize, &o);
+call    0 never executed
+        -:  967:}
+        -:  968:
+        -:  969:char *
+function quotearg_style called 0 returned 0% blocks executed 0%
+    #####:  970:quotearg_style (enum quoting_style s, char const *arg)
+        -:  971:{
+    #####:  972:  return quotearg_n_style (0, s, arg);
+call    0 never executed
+        -:  973:}
+        -:  974:
+        -:  975:char *
+function quotearg_style_mem called 0 returned 0% blocks executed 0%
+    #####:  976:quotearg_style_mem (enum quoting_style s, char const *arg, size_t argsize)
+        -:  977:{
+    #####:  978:  return quotearg_n_style_mem (0, s, arg, argsize);
+call    0 never executed
+        -:  979:}
+        -:  980:
+        -:  981:char *
+function quotearg_char_mem called 0 returned 0% blocks executed 0%
+    #####:  982:quotearg_char_mem (char const *arg, size_t argsize, char ch)
+        -:  983:{
+        -:  984:  struct quoting_options options;
+    #####:  985:  options = default_quoting_options;
+    #####:  986:  set_char_quoting (&options, ch, 1);
+call    0 never executed
+    #####:  987:  return quotearg_n_options (0, arg, argsize, &options);
+call    0 never executed
+        -:  988:}
+        -:  989:
+        -:  990:char *
+function quotearg_char called 0 returned 0% blocks executed 0%
+    #####:  991:quotearg_char (char const *arg, char ch)
+        -:  992:{
+    #####:  993:  return quotearg_char_mem (arg, SIZE_MAX, ch);
+call    0 never executed
+        -:  994:}
+        -:  995:
+        -:  996:char *
+function quotearg_colon called 0 returned 0% blocks executed 0%
+    #####:  997:quotearg_colon (char const *arg)
+        -:  998:{
+    #####:  999:  return quotearg_char (arg, ':');
+call    0 never executed
+        -: 1000:}
+        -: 1001:
+        -: 1002:char *
+function quotearg_colon_mem called 0 returned 0% blocks executed 0%
+    #####: 1003:quotearg_colon_mem (char const *arg, size_t argsize)
+        -: 1004:{
+    #####: 1005:  return quotearg_char_mem (arg, argsize, ':');
+call    0 never executed
+        -: 1006:}
+        -: 1007:
+        -: 1008:char *
+function quotearg_n_style_colon called 0 returned 0% blocks executed 0%
+    #####: 1009:quotearg_n_style_colon (int n, enum quoting_style s, char const *arg)
+        -: 1010:{
+        -: 1011:  struct quoting_options options;
+    #####: 1012:  options = quoting_options_from_style (s);
+call    0 never executed
+    #####: 1013:  set_char_quoting (&options, ':', 1);
+call    0 never executed
+    #####: 1014:  return quotearg_n_options (n, arg, SIZE_MAX, &options);
+call    0 never executed
+        -: 1015:}
+        -: 1016:
+        -: 1017:char *
+function quotearg_n_custom called 0 returned 0% blocks executed 0%
+    #####: 1018:quotearg_n_custom (int n, char const *left_quote,
+        -: 1019:                   char const *right_quote, char const *arg)
+        -: 1020:{
+    #####: 1021:  return quotearg_n_custom_mem (n, left_quote, right_quote, arg,
+call    0 never executed
+        -: 1022:                                SIZE_MAX);
+        -: 1023:}
+        -: 1024:
+        -: 1025:char *
+function quotearg_n_custom_mem called 0 returned 0% blocks executed 0%
+    #####: 1026:quotearg_n_custom_mem (int n, char const *left_quote,
+        -: 1027:                       char const *right_quote,
+        -: 1028:                       char const *arg, size_t argsize)
+        -: 1029:{
+    #####: 1030:  struct quoting_options o = default_quoting_options;
+    #####: 1031:  set_custom_quoting (&o, left_quote, right_quote);
+call    0 never executed
+    #####: 1032:  return quotearg_n_options (n, arg, argsize, &o);
+call    0 never executed
+        -: 1033:}
+        -: 1034:
+        -: 1035:char *
+function quotearg_custom called 0 returned 0% blocks executed 0%
+    #####: 1036:quotearg_custom (char const *left_quote, char const *right_quote,
+        -: 1037:                 char const *arg)
+        -: 1038:{
+    #####: 1039:  return quotearg_n_custom (0, left_quote, right_quote, arg);
+call    0 never executed
+        -: 1040:}
+        -: 1041:
+        -: 1042:char *
+function quotearg_custom_mem called 0 returned 0% blocks executed 0%
+    #####: 1043:quotearg_custom_mem (char const *left_quote, char const *right_quote,
+        -: 1044:                     char const *arg, size_t argsize)
+        -: 1045:{
+    #####: 1046:  return quotearg_n_custom_mem (0, left_quote, right_quote, arg,
+call    0 never executed
+        -: 1047:                                argsize);
+        -: 1048:}
+        -: 1049:
+        -: 1050:
+        -: 1051:/* The quoting option used by the functions of quote.h.  */
+        -: 1052:struct quoting_options quote_quoting_options =
+        -: 1053:  {
+        -: 1054:    locale_quoting_style,
+        -: 1055:    0,
+        -: 1056:    { 0 },
+        -: 1057:    NULL, NULL
+        -: 1058:  };
+        -: 1059:
+        -: 1060:char const *
+function quote_n_mem called 0 returned 0% blocks executed 0%
+    #####: 1061:quote_n_mem (int n, char const *arg, size_t argsize)
+        -: 1062:{
+    #####: 1063:  return quotearg_n_options (n, arg, argsize, &quote_quoting_options);
+call    0 never executed
+        -: 1064:}
+        -: 1065:
+        -: 1066:char const *
+function quote_mem called 0 returned 0% blocks executed 0%
+    #####: 1067:quote_mem (char const *arg, size_t argsize)
+        -: 1068:{
+    #####: 1069:  return quote_n_mem (0, arg, argsize);
+call    0 never executed
+        -: 1070:}
+        -: 1071:
+        -: 1072:char const *
+function quote_n called 0 returned 0% blocks executed 0%
+    #####: 1073:quote_n (int n, char const *arg)
+        -: 1074:{
+    #####: 1075:  return quote_n_mem (n, arg, SIZE_MAX);
+call    0 never executed
+        -: 1076:}
+        -: 1077:
+        -: 1078:char const *
+function quote called 0 returned 0% blocks executed 0%
+    #####: 1079:quote (char const *arg)
+        -: 1080:{
+    #####: 1081:  return quote_n (0, arg);
+call    0 never executed
+        -: 1082:}
+        -: 1083:
+        -: 1084:/*
+        -: 1085: * Hey Emacs!
+        -: 1086: * Local Variables:
+        -: 1087: * coding: utf-8
+        -: 1088: * End:
+        -: 1089: */

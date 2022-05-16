@@ -1,0 +1,2454 @@
+        -:    0:Source:../../lib/regex_internal.c
+        -:    0:Programs:50
+        -:    1:/* Extended regular expression matching and search library.
+        -:    2:   Copyright (C) 2002-2020 Free Software Foundation, Inc.
+        -:    3:   This file is part of the GNU C Library.
+        -:    4:   Contributed by Isamu Hasegawa <isamu@yamato.ibm.com>.
+        -:    5:
+        -:    6:   The GNU C Library is free software; you can redistribute it and/or
+        -:    7:   modify it under the terms of the GNU General Public
+        -:    8:   License as published by the Free Software Foundation; either
+        -:    9:   version 3 of the License, or (at your option) any later version.
+        -:   10:
+        -:   11:   The GNU C Library is distributed in the hope that it will be useful,
+        -:   12:   but WITHOUT ANY WARRANTY; without even the implied warranty of
+        -:   13:   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+        -:   14:   General Public License for more details.
+        -:   15:
+        -:   16:   You should have received a copy of the GNU General Public
+        -:   17:   License along with the GNU C Library; if not, see
+        -:   18:   <https://www.gnu.org/licenses/>.  */
+        -:   19:
+        -:   20:static void re_string_construct_common (const char *str, Idx len,
+        -:   21:					re_string_t *pstr,
+        -:   22:					RE_TRANSLATE_TYPE trans, bool icase,
+        -:   23:					const re_dfa_t *dfa);
+        -:   24:static re_dfastate_t *create_ci_newstate (const re_dfa_t *dfa,
+        -:   25:					  const re_node_set *nodes,
+        -:   26:					  re_hashval_t hash);
+        -:   27:static re_dfastate_t *create_cd_newstate (const re_dfa_t *dfa,
+        -:   28:					  const re_node_set *nodes,
+        -:   29:					  unsigned int context,
+        -:   30:					  re_hashval_t hash);
+        -:   31:static reg_errcode_t re_string_realloc_buffers (re_string_t *pstr,
+        -:   32:						Idx new_buf_len);
+        -:   33:#ifdef RE_ENABLE_I18N
+        -:   34:static void build_wcs_buffer (re_string_t *pstr);
+        -:   35:static reg_errcode_t build_wcs_upper_buffer (re_string_t *pstr);
+        -:   36:#endif /* RE_ENABLE_I18N */
+        -:   37:static void build_upper_buffer (re_string_t *pstr);
+        -:   38:static void re_string_translate_buffer (re_string_t *pstr);
+        -:   39:static unsigned int re_string_context_at (const re_string_t *input, Idx idx,
+        -:   40:					  int eflags) __attribute__ ((pure));
+        -:   41:
+        -:   42:/* Functions for string operation.  */
+        -:   43:
+        -:   44:/* This function allocate the buffers.  It is necessary to call
+        -:   45:   re_string_reconstruct before using the object.  */
+        -:   46:
+        -:   47:static reg_errcode_t
+        -:   48:__attribute_warn_unused_result__
+function re_string_allocate called 0 returned 0% blocks executed 0%
+    #####:   49:re_string_allocate (re_string_t *pstr, const char *str, Idx len, Idx init_len,
+        -:   50:		    RE_TRANSLATE_TYPE trans, bool icase, const re_dfa_t *dfa)
+        -:   51:{
+        -:   52:  reg_errcode_t ret;
+        -:   53:  Idx init_buf_len;
+        -:   54:
+        -:   55:  /* Ensure at least one character fits into the buffers.  */
+    #####:   56:  if (init_len < dfa->mb_cur_max)
+branch  0 never executed
+branch  1 never executed
+    #####:   57:    init_len = dfa->mb_cur_max;
+    #####:   58:  init_buf_len = (len + 1 < init_len) ? len + 1: init_len;
+    #####:   59:  re_string_construct_common (str, len, pstr, trans, icase, dfa);
+call    0 never executed
+        -:   60:
+    #####:   61:  ret = re_string_realloc_buffers (pstr, init_buf_len);
+call    0 never executed
+    #####:   62:  if (__glibc_unlikely (ret != REG_NOERROR))
+branch  0 never executed
+branch  1 never executed
+    #####:   63:    return ret;
+        -:   64:
+    #####:   65:  pstr->word_char = dfa->word_char;
+    #####:   66:  pstr->word_ops_used = dfa->word_ops_used;
+    #####:   67:  pstr->mbs = pstr->mbs_allocated ? pstr->mbs : (unsigned char *) str;
+branch  0 never executed
+branch  1 never executed
+    #####:   68:  pstr->valid_len = (pstr->mbs_allocated || dfa->mb_cur_max > 1) ? 0 : len;
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:   69:  pstr->valid_raw_len = pstr->valid_len;
+    #####:   70:  return REG_NOERROR;
+        -:   71:}
+        -:   72:
+        -:   73:/* This function allocate the buffers, and initialize them.  */
+        -:   74:
+        -:   75:static reg_errcode_t
+        -:   76:__attribute_warn_unused_result__
+function re_string_construct called 0 returned 0% blocks executed 0%
+    #####:   77:re_string_construct (re_string_t *pstr, const char *str, Idx len,
+        -:   78:		     RE_TRANSLATE_TYPE trans, bool icase, const re_dfa_t *dfa)
+        -:   79:{
+        -:   80:  reg_errcode_t ret;
+    #####:   81:  memset (pstr, '\0', sizeof (re_string_t));
+    #####:   82:  re_string_construct_common (str, len, pstr, trans, icase, dfa);
+call    0 never executed
+        -:   83:
+    #####:   84:  if (len > 0)
+branch  0 never executed
+branch  1 never executed
+        -:   85:    {
+    #####:   86:      ret = re_string_realloc_buffers (pstr, len + 1);
+call    0 never executed
+    #####:   87:      if (__glibc_unlikely (ret != REG_NOERROR))
+branch  0 never executed
+branch  1 never executed
+    #####:   88:	return ret;
+        -:   89:    }
+    #####:   90:  pstr->mbs = pstr->mbs_allocated ? pstr->mbs : (unsigned char *) str;
+branch  0 never executed
+branch  1 never executed
+        -:   91:
+    #####:   92:  if (icase)
+branch  0 never executed
+branch  1 never executed
+        -:   93:    {
+        -:   94:#ifdef RE_ENABLE_I18N
+    #####:   95:      if (dfa->mb_cur_max > 1)
+branch  0 never executed
+branch  1 never executed
+        -:   96:	{
+        -:   97:	  while (1)
+        -:   98:	    {
+    #####:   99:	      ret = build_wcs_upper_buffer (pstr);
+call    0 never executed
+    #####:  100:	      if (__glibc_unlikely (ret != REG_NOERROR))
+branch  0 never executed
+branch  1 never executed
+    #####:  101:		return ret;
+    #####:  102:	      if (pstr->valid_raw_len >= len)
+branch  0 never executed
+branch  1 never executed
+    #####:  103:		break;
+    #####:  104:	      if (pstr->bufs_len > pstr->valid_len + dfa->mb_cur_max)
+branch  0 never executed
+branch  1 never executed
+    #####:  105:		break;
+    #####:  106:	      ret = re_string_realloc_buffers (pstr, pstr->bufs_len * 2);
+call    0 never executed
+    #####:  107:	      if (__glibc_unlikely (ret != REG_NOERROR))
+branch  0 never executed
+branch  1 never executed
+    #####:  108:		return ret;
+        -:  109:	    }
+        -:  110:	}
+        -:  111:      else
+        -:  112:#endif /* RE_ENABLE_I18N  */
+    #####:  113:	build_upper_buffer (pstr);
+call    0 never executed
+        -:  114:    }
+        -:  115:  else
+        -:  116:    {
+        -:  117:#ifdef RE_ENABLE_I18N
+    #####:  118:      if (dfa->mb_cur_max > 1)
+branch  0 never executed
+branch  1 never executed
+    #####:  119:	build_wcs_buffer (pstr);
+call    0 never executed
+        -:  120:      else
+        -:  121:#endif /* RE_ENABLE_I18N  */
+        -:  122:	{
+    #####:  123:	  if (trans != NULL)
+branch  0 never executed
+branch  1 never executed
+    #####:  124:	    re_string_translate_buffer (pstr);
+call    0 never executed
+        -:  125:	  else
+        -:  126:	    {
+    #####:  127:	      pstr->valid_len = pstr->bufs_len;
+    #####:  128:	      pstr->valid_raw_len = pstr->bufs_len;
+        -:  129:	    }
+        -:  130:	}
+        -:  131:    }
+        -:  132:
+    #####:  133:  return REG_NOERROR;
+        -:  134:}
+        -:  135:
+        -:  136:/* Helper functions for re_string_allocate, and re_string_construct.  */
+        -:  137:
+        -:  138:static reg_errcode_t
+        -:  139:__attribute_warn_unused_result__
+function re_string_realloc_buffers called 0 returned 0% blocks executed 0%
+    #####:  140:re_string_realloc_buffers (re_string_t *pstr, Idx new_buf_len)
+        -:  141:{
+        -:  142:#ifdef RE_ENABLE_I18N
+    #####:  143:  if (pstr->mb_cur_max > 1)
+branch  0 never executed
+branch  1 never executed
+        -:  144:    {
+        -:  145:      wint_t *new_wcs;
+        -:  146:
+        -:  147:      /* Avoid overflow in realloc.  */
+    #####:  148:      const size_t max_object_size = MAX (sizeof (wint_t), sizeof (Idx));
+    #####:  149:      if (__glibc_unlikely (MIN (IDX_MAX, SIZE_MAX / max_object_size)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  150:			    < new_buf_len))
+    #####:  151:	return REG_ESPACE;
+        -:  152:
+    #####:  153:      new_wcs = re_realloc (pstr->wcs, wint_t, new_buf_len);
+    #####:  154:      if (__glibc_unlikely (new_wcs == NULL))
+branch  0 never executed
+branch  1 never executed
+    #####:  155:	return REG_ESPACE;
+    #####:  156:      pstr->wcs = new_wcs;
+    #####:  157:      if (pstr->offsets != NULL)
+branch  0 never executed
+branch  1 never executed
+        -:  158:	{
+    #####:  159:	  Idx *new_offsets = re_realloc (pstr->offsets, Idx, new_buf_len);
+    #####:  160:	  if (__glibc_unlikely (new_offsets == NULL))
+branch  0 never executed
+branch  1 never executed
+    #####:  161:	    return REG_ESPACE;
+    #####:  162:	  pstr->offsets = new_offsets;
+        -:  163:	}
+        -:  164:    }
+        -:  165:#endif /* RE_ENABLE_I18N  */
+    #####:  166:  if (pstr->mbs_allocated)
+branch  0 never executed
+branch  1 never executed
+        -:  167:    {
+    #####:  168:      unsigned char *new_mbs = re_realloc (pstr->mbs, unsigned char,
+        -:  169:					   new_buf_len);
+    #####:  170:      if (__glibc_unlikely (new_mbs == NULL))
+branch  0 never executed
+branch  1 never executed
+    #####:  171:	return REG_ESPACE;
+    #####:  172:      pstr->mbs = new_mbs;
+        -:  173:    }
+    #####:  174:  pstr->bufs_len = new_buf_len;
+    #####:  175:  return REG_NOERROR;
+        -:  176:}
+        -:  177:
+        -:  178:
+        -:  179:static void
+function re_string_construct_common called 0 returned 0% blocks executed 0%
+    #####:  180:re_string_construct_common (const char *str, Idx len, re_string_t *pstr,
+        -:  181:			    RE_TRANSLATE_TYPE trans, bool icase,
+        -:  182:			    const re_dfa_t *dfa)
+        -:  183:{
+    #####:  184:  pstr->raw_mbs = (const unsigned char *) str;
+    #####:  185:  pstr->len = len;
+    #####:  186:  pstr->raw_len = len;
+    #####:  187:  pstr->trans = trans;
+    #####:  188:  pstr->icase = icase;
+    #####:  189:  pstr->mbs_allocated = (trans != NULL || icase);
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  190:  pstr->mb_cur_max = dfa->mb_cur_max;
+    #####:  191:  pstr->is_utf8 = dfa->is_utf8;
+    #####:  192:  pstr->map_notascii = dfa->map_notascii;
+    #####:  193:  pstr->stop = pstr->len;
+    #####:  194:  pstr->raw_stop = pstr->stop;
+    #####:  195:}
+        -:  196:
+        -:  197:#ifdef RE_ENABLE_I18N
+        -:  198:
+        -:  199:/* Build wide character buffer PSTR->WCS.
+        -:  200:   If the byte sequence of the string are:
+        -:  201:     <mb1>(0), <mb1>(1), <mb2>(0), <mb2>(1), <sb3>
+        -:  202:   Then wide character buffer will be:
+        -:  203:     <wc1>   , WEOF    , <wc2>   , WEOF    , <wc3>
+        -:  204:   We use WEOF for padding, they indicate that the position isn't
+        -:  205:   a first byte of a multibyte character.
+        -:  206:
+        -:  207:   Note that this function assumes PSTR->VALID_LEN elements are already
+        -:  208:   built and starts from PSTR->VALID_LEN.  */
+        -:  209:
+        -:  210:static void
+function build_wcs_buffer called 0 returned 0% blocks executed 0%
+    #####:  211:build_wcs_buffer (re_string_t *pstr)
+        -:  212:{
+        -:  213:#ifdef _LIBC
+        -:  214:  unsigned char buf[MB_LEN_MAX];
+        -:  215:  DEBUG_ASSERT (MB_LEN_MAX >= pstr->mb_cur_max);
+        -:  216:#else
+        -:  217:  unsigned char buf[64];
+        -:  218:#endif
+        -:  219:  mbstate_t prev_st;
+        -:  220:  Idx byte_idx, end_idx, remain_len;
+        -:  221:  size_t mbclen;
+        -:  222:
+        -:  223:  /* Build the buffers from pstr->valid_len to either pstr->len or
+        -:  224:     pstr->bufs_len.  */
+    #####:  225:  end_idx = (pstr->bufs_len > pstr->len) ? pstr->len : pstr->bufs_len;
+    #####:  226:  for (byte_idx = pstr->valid_len; byte_idx < end_idx;)
+branch  0 never executed
+branch  1 never executed
+        -:  227:    {
+        -:  228:      wchar_t wc;
+        -:  229:      const char *p;
+        -:  230:
+    #####:  231:      remain_len = end_idx - byte_idx;
+    #####:  232:      prev_st = pstr->cur_state;
+        -:  233:      /* Apply the translation if we need.  */
+    #####:  234:      if (__glibc_unlikely (pstr->trans != NULL))
+branch  0 never executed
+branch  1 never executed
+        -:  235:	{
+        -:  236:	  int i, ch;
+        -:  237:
+    #####:  238:	  for (i = 0; i < pstr->mb_cur_max && i < remain_len; ++i)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  239:	    {
+    #####:  240:	      ch = pstr->raw_mbs [pstr->raw_mbs_idx + byte_idx + i];
+    #####:  241:	      buf[i] = pstr->mbs[byte_idx + i] = pstr->trans[ch];
+        -:  242:	    }
+    #####:  243:	  p = (const char *) buf;
+        -:  244:	}
+        -:  245:      else
+    #####:  246:	p = (const char *) pstr->raw_mbs + pstr->raw_mbs_idx + byte_idx;
+    #####:  247:      mbclen = __mbrtowc (&wc, p, remain_len, &pstr->cur_state);
+call    0 never executed
+    #####:  248:      if (__glibc_unlikely (mbclen == (size_t) -1 || mbclen == 0
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+branch  7 never executed
+branch  8 never executed
+branch  9 never executed
+branch 10 never executed
+branch 11 never executed
+        -:  249:			    || (mbclen == (size_t) -2
+        -:  250:				&& pstr->bufs_len >= pstr->len)))
+        -:  251:	{
+        -:  252:	  /* We treat these cases as a singlebyte character.  */
+    #####:  253:	  mbclen = 1;
+    #####:  254:	  wc = (wchar_t) pstr->raw_mbs[pstr->raw_mbs_idx + byte_idx];
+    #####:  255:	  if (__glibc_unlikely (pstr->trans != NULL))
+branch  0 never executed
+branch  1 never executed
+    #####:  256:	    wc = pstr->trans[wc];
+    #####:  257:	  pstr->cur_state = prev_st;
+        -:  258:	}
+    #####:  259:      else if (__glibc_unlikely (mbclen == (size_t) -2))
+branch  0 never executed
+branch  1 never executed
+        -:  260:	{
+        -:  261:	  /* The buffer doesn't have enough space, finish to build.  */
+    #####:  262:	  pstr->cur_state = prev_st;
+    #####:  263:	  break;
+        -:  264:	}
+        -:  265:
+        -:  266:      /* Write wide character and padding.  */
+    #####:  267:      pstr->wcs[byte_idx++] = wc;
+        -:  268:      /* Write paddings.  */
+    #####:  269:      for (remain_len = byte_idx + mbclen - 1; byte_idx < remain_len ;)
+branch  0 never executed
+branch  1 never executed
+    #####:  270:	pstr->wcs[byte_idx++] = WEOF;
+        -:  271:    }
+    #####:  272:  pstr->valid_len = byte_idx;
+    #####:  273:  pstr->valid_raw_len = byte_idx;
+    #####:  274:}
+        -:  275:
+        -:  276:/* Build wide character buffer PSTR->WCS like build_wcs_buffer,
+        -:  277:   but for REG_ICASE.  */
+        -:  278:
+        -:  279:static reg_errcode_t
+        -:  280:__attribute_warn_unused_result__
+function build_wcs_upper_buffer called 0 returned 0% blocks executed 0%
+    #####:  281:build_wcs_upper_buffer (re_string_t *pstr)
+        -:  282:{
+        -:  283:  mbstate_t prev_st;
+        -:  284:  Idx src_idx, byte_idx, end_idx, remain_len;
+        -:  285:  size_t mbclen;
+        -:  286:#ifdef _LIBC
+        -:  287:  char buf[MB_LEN_MAX];
+        -:  288:  DEBUG_ASSERT (pstr->mb_cur_max <= MB_LEN_MAX);
+        -:  289:#else
+        -:  290:  char buf[64];
+        -:  291:#endif
+        -:  292:
+    #####:  293:  byte_idx = pstr->valid_len;
+    #####:  294:  end_idx = (pstr->bufs_len > pstr->len) ? pstr->len : pstr->bufs_len;
+        -:  295:
+        -:  296:  /* The following optimization assumes that ASCII characters can be
+        -:  297:     mapped to wide characters with a simple cast.  */
+    #####:  298:  if (! pstr->map_notascii && pstr->trans == NULL && !pstr->offsets_needed)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+        -:  299:    {
+    #####:  300:      while (byte_idx < end_idx)
+branch  0 never executed
+branch  1 never executed
+        -:  301:	{
+        -:  302:	  wchar_t wc;
+        -:  303:
+    #####:  304:	  if (isascii (pstr->raw_mbs[pstr->raw_mbs_idx + byte_idx])
+branch  0 never executed
+branch  1 never executed
+    #####:  305:	      && mbsinit (&pstr->cur_state))
+branch  0 never executed
+branch  1 never executed
+        -:  306:	    {
+        -:  307:	      /* In case of a singlebyte character.  */
+    #####:  308:	      pstr->mbs[byte_idx]
+    #####:  309:		= toupper (pstr->raw_mbs[pstr->raw_mbs_idx + byte_idx]);
+        -:  310:	      /* The next step uses the assumption that wchar_t is encoded
+        -:  311:		 ASCII-safe: all ASCII values can be converted like this.  */
+    #####:  312:	      pstr->wcs[byte_idx] = (wchar_t) pstr->mbs[byte_idx];
+    #####:  313:	      ++byte_idx;
+    #####:  314:	      continue;
+        -:  315:	    }
+        -:  316:
+    #####:  317:	  remain_len = end_idx - byte_idx;
+    #####:  318:	  prev_st = pstr->cur_state;
+    #####:  319:	  mbclen = __mbrtowc (&wc,
+call    0 never executed
+    #####:  320:			      ((const char *) pstr->raw_mbs + pstr->raw_mbs_idx
+    #####:  321:			       + byte_idx), remain_len, &pstr->cur_state);
+    #####:  322:	  if (__glibc_likely (0 < mbclen && mbclen < (size_t) -2))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  323:	    {
+    #####:  324:	      wchar_t wcu = __towupper (wc);
+    #####:  325:	      if (wcu != wc)
+branch  0 never executed
+branch  1 never executed
+        -:  326:		{
+        -:  327:		  size_t mbcdlen;
+        -:  328:
+    #####:  329:		  mbcdlen = __wcrtomb (buf, wcu, &prev_st);
+call    0 never executed
+    #####:  330:		  if (__glibc_likely (mbclen == mbcdlen))
+branch  0 never executed
+branch  1 never executed
+    #####:  331:		    memcpy (pstr->mbs + byte_idx, buf, mbclen);
+        -:  332:		  else
+        -:  333:		    {
+    #####:  334:		      src_idx = byte_idx;
+    #####:  335:		      goto offsets_needed;
+        -:  336:		    }
+        -:  337:		}
+        -:  338:	      else
+    #####:  339:		memcpy (pstr->mbs + byte_idx,
+    #####:  340:			pstr->raw_mbs + pstr->raw_mbs_idx + byte_idx, mbclen);
+    #####:  341:	      pstr->wcs[byte_idx++] = wcu;
+        -:  342:	      /* Write paddings.  */
+    #####:  343:	      for (remain_len = byte_idx + mbclen - 1; byte_idx < remain_len ;)
+branch  0 never executed
+branch  1 never executed
+    #####:  344:		pstr->wcs[byte_idx++] = WEOF;
+        -:  345:	    }
+    #####:  346:	  else if (mbclen == (size_t) -1 || mbclen == 0
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  347:		   || (mbclen == (size_t) -2 && pstr->bufs_len >= pstr->len))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  348:	    {
+        -:  349:	      /* It is an invalid character, an incomplete character
+        -:  350:		 at the end of the string, or '\0'.  Just use the byte.  */
+    #####:  351:	      int ch = pstr->raw_mbs[pstr->raw_mbs_idx + byte_idx];
+    #####:  352:	      pstr->mbs[byte_idx] = ch;
+        -:  353:	      /* And also cast it to wide char.  */
+    #####:  354:	      pstr->wcs[byte_idx++] = (wchar_t) ch;
+    #####:  355:	      if (__glibc_unlikely (mbclen == (size_t) -1))
+branch  0 never executed
+branch  1 never executed
+    #####:  356:		pstr->cur_state = prev_st;
+        -:  357:	    }
+        -:  358:	  else
+        -:  359:	    {
+        -:  360:	      /* The buffer doesn't have enough space, finish to build.  */
+    #####:  361:	      pstr->cur_state = prev_st;
+    #####:  362:	      break;
+        -:  363:	    }
+        -:  364:	}
+    #####:  365:      pstr->valid_len = byte_idx;
+    #####:  366:      pstr->valid_raw_len = byte_idx;
+    #####:  367:      return REG_NOERROR;
+        -:  368:    }
+        -:  369:  else
+    #####:  370:    for (src_idx = pstr->valid_raw_len; byte_idx < end_idx;)
+branch  0 never executed
+branch  1 never executed
+        -:  371:      {
+        -:  372:	wchar_t wc;
+        -:  373:	const char *p;
+    #####:  374:      offsets_needed:
+    #####:  375:	remain_len = end_idx - byte_idx;
+    #####:  376:	prev_st = pstr->cur_state;
+    #####:  377:	if (__glibc_unlikely (pstr->trans != NULL))
+branch  0 never executed
+branch  1 never executed
+        -:  378:	  {
+        -:  379:	    int i, ch;
+        -:  380:
+    #####:  381:	    for (i = 0; i < pstr->mb_cur_max && i < remain_len; ++i)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  382:	      {
+    #####:  383:		ch = pstr->raw_mbs [pstr->raw_mbs_idx + src_idx + i];
+    #####:  384:		buf[i] = pstr->trans[ch];
+        -:  385:	      }
+    #####:  386:	    p = (const char *) buf;
+        -:  387:	  }
+        -:  388:	else
+    #####:  389:	  p = (const char *) pstr->raw_mbs + pstr->raw_mbs_idx + src_idx;
+    #####:  390:	mbclen = __mbrtowc (&wc, p, remain_len, &pstr->cur_state);
+call    0 never executed
+    #####:  391:	if (__glibc_likely (0 < mbclen && mbclen < (size_t) -2))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  392:	  {
+    #####:  393:	    wchar_t wcu = __towupper (wc);
+    #####:  394:	    if (wcu != wc)
+branch  0 never executed
+branch  1 never executed
+        -:  395:	      {
+        -:  396:		size_t mbcdlen;
+        -:  397:
+    #####:  398:		mbcdlen = __wcrtomb ((char *) buf, wcu, &prev_st);
+call    0 never executed
+    #####:  399:		if (__glibc_likely (mbclen == mbcdlen))
+branch  0 never executed
+branch  1 never executed
+    #####:  400:		  memcpy (pstr->mbs + byte_idx, buf, mbclen);
+    #####:  401:		else if (mbcdlen != (size_t) -1)
+branch  0 never executed
+branch  1 never executed
+        -:  402:		  {
+        -:  403:		    size_t i;
+        -:  404:
+    #####:  405:		    if (byte_idx + mbcdlen > pstr->bufs_len)
+branch  0 never executed
+branch  1 never executed
+        -:  406:		      {
+    #####:  407:			pstr->cur_state = prev_st;
+    #####:  408:			break;
+        -:  409:		      }
+        -:  410:
+    #####:  411:		    if (pstr->offsets == NULL)
+branch  0 never executed
+branch  1 never executed
+        -:  412:		      {
+    #####:  413:			pstr->offsets = re_malloc (Idx, pstr->bufs_len);
+        -:  414:
+    #####:  415:			if (pstr->offsets == NULL)
+branch  0 never executed
+branch  1 never executed
+    #####:  416:			  return REG_ESPACE;
+        -:  417:		      }
+    #####:  418:		    if (!pstr->offsets_needed)
+branch  0 never executed
+branch  1 never executed
+        -:  419:		      {
+    #####:  420:			for (i = 0; i < (size_t) byte_idx; ++i)
+branch  0 never executed
+branch  1 never executed
+    #####:  421:			  pstr->offsets[i] = i;
+    #####:  422:			pstr->offsets_needed = 1;
+        -:  423:		      }
+        -:  424:
+    #####:  425:		    memcpy (pstr->mbs + byte_idx, buf, mbcdlen);
+    #####:  426:		    pstr->wcs[byte_idx] = wcu;
+    #####:  427:		    pstr->offsets[byte_idx] = src_idx;
+    #####:  428:		    for (i = 1; i < mbcdlen; ++i)
+branch  0 never executed
+branch  1 never executed
+        -:  429:		      {
+    #####:  430:			pstr->offsets[byte_idx + i]
+    #####:  431:			  = src_idx + (i < mbclen ? i : mbclen - 1);
+branch  0 never executed
+branch  1 never executed
+    #####:  432:			pstr->wcs[byte_idx + i] = WEOF;
+        -:  433:		      }
+    #####:  434:		    pstr->len += mbcdlen - mbclen;
+    #####:  435:		    if (pstr->raw_stop > src_idx)
+branch  0 never executed
+branch  1 never executed
+    #####:  436:		      pstr->stop += mbcdlen - mbclen;
+    #####:  437:		    end_idx = (pstr->bufs_len > pstr->len)
+        -:  438:			      ? pstr->len : pstr->bufs_len;
+    #####:  439:		    byte_idx += mbcdlen;
+    #####:  440:		    src_idx += mbclen;
+    #####:  441:		    continue;
+        -:  442:		  }
+        -:  443:		else
+    #####:  444:		  memcpy (pstr->mbs + byte_idx, p, mbclen);
+        -:  445:	      }
+        -:  446:	    else
+    #####:  447:	      memcpy (pstr->mbs + byte_idx, p, mbclen);
+        -:  448:
+    #####:  449:	    if (__glibc_unlikely (pstr->offsets_needed != 0))
+branch  0 never executed
+branch  1 never executed
+        -:  450:	      {
+        -:  451:		size_t i;
+    #####:  452:		for (i = 0; i < mbclen; ++i)
+branch  0 never executed
+branch  1 never executed
+    #####:  453:		  pstr->offsets[byte_idx + i] = src_idx + i;
+        -:  454:	      }
+    #####:  455:	    src_idx += mbclen;
+        -:  456:
+    #####:  457:	    pstr->wcs[byte_idx++] = wcu;
+        -:  458:	    /* Write paddings.  */
+    #####:  459:	    for (remain_len = byte_idx + mbclen - 1; byte_idx < remain_len ;)
+branch  0 never executed
+branch  1 never executed
+    #####:  460:	      pstr->wcs[byte_idx++] = WEOF;
+        -:  461:	  }
+    #####:  462:	else if (mbclen == (size_t) -1 || mbclen == 0
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  463:		 || (mbclen == (size_t) -2 && pstr->bufs_len >= pstr->len))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  464:	  {
+        -:  465:	    /* It is an invalid character or '\0'.  Just use the byte.  */
+    #####:  466:	    int ch = pstr->raw_mbs[pstr->raw_mbs_idx + src_idx];
+        -:  467:
+    #####:  468:	    if (__glibc_unlikely (pstr->trans != NULL))
+branch  0 never executed
+branch  1 never executed
+    #####:  469:	      ch = pstr->trans [ch];
+    #####:  470:	    pstr->mbs[byte_idx] = ch;
+        -:  471:
+    #####:  472:	    if (__glibc_unlikely (pstr->offsets_needed != 0))
+branch  0 never executed
+branch  1 never executed
+    #####:  473:	      pstr->offsets[byte_idx] = src_idx;
+    #####:  474:	    ++src_idx;
+        -:  475:
+        -:  476:	    /* And also cast it to wide char.  */
+    #####:  477:	    pstr->wcs[byte_idx++] = (wchar_t) ch;
+    #####:  478:	    if (__glibc_unlikely (mbclen == (size_t) -1))
+branch  0 never executed
+branch  1 never executed
+    #####:  479:	      pstr->cur_state = prev_st;
+        -:  480:	  }
+        -:  481:	else
+        -:  482:	  {
+        -:  483:	    /* The buffer doesn't have enough space, finish to build.  */
+    #####:  484:	    pstr->cur_state = prev_st;
+    #####:  485:	    break;
+        -:  486:	  }
+        -:  487:      }
+    #####:  488:  pstr->valid_len = byte_idx;
+    #####:  489:  pstr->valid_raw_len = src_idx;
+    #####:  490:  return REG_NOERROR;
+        -:  491:}
+        -:  492:
+        -:  493:/* Skip characters until the index becomes greater than NEW_RAW_IDX.
+        -:  494:   Return the index.  */
+        -:  495:
+        -:  496:static Idx
+function re_string_skip_chars called 0 returned 0% blocks executed 0%
+    #####:  497:re_string_skip_chars (re_string_t *pstr, Idx new_raw_idx, wint_t *last_wc)
+        -:  498:{
+        -:  499:  mbstate_t prev_st;
+        -:  500:  Idx rawbuf_idx;
+        -:  501:  size_t mbclen;
+    #####:  502:  wint_t wc = WEOF;
+        -:  503:
+        -:  504:  /* Skip the characters which are not necessary to check.  */
+    #####:  505:  for (rawbuf_idx = pstr->raw_mbs_idx + pstr->valid_raw_len;
+branch  0 never executed
+branch  1 never executed
+        -:  506:       rawbuf_idx < new_raw_idx;)
+        -:  507:    {
+        -:  508:      wchar_t wc2;
+    #####:  509:      Idx remain_len = pstr->raw_len - rawbuf_idx;
+    #####:  510:      prev_st = pstr->cur_state;
+    #####:  511:      mbclen = __mbrtowc (&wc2, (const char *) pstr->raw_mbs + rawbuf_idx,
+call    0 never executed
+        -:  512:			  remain_len, &pstr->cur_state);
+    #####:  513:      if (__glibc_unlikely (mbclen == (size_t) -2 || mbclen == (size_t) -1
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+branch  7 never executed
+        -:  514:			    || mbclen == 0))
+        -:  515:	{
+        -:  516:	  /* We treat these cases as a single byte character.  */
+    #####:  517:	  if (mbclen == 0 || remain_len == 0)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  518:	    wc = L'\0';
+        -:  519:	  else
+    #####:  520:	    wc = *(unsigned char *) (pstr->raw_mbs + rawbuf_idx);
+    #####:  521:	  mbclen = 1;
+    #####:  522:	  pstr->cur_state = prev_st;
+        -:  523:	}
+        -:  524:      else
+    #####:  525:	wc = wc2;
+        -:  526:      /* Then proceed the next character.  */
+    #####:  527:      rawbuf_idx += mbclen;
+        -:  528:    }
+    #####:  529:  *last_wc = wc;
+    #####:  530:  return rawbuf_idx;
+        -:  531:}
+        -:  532:#endif /* RE_ENABLE_I18N  */
+        -:  533:
+        -:  534:/* Build the buffer PSTR->MBS, and apply the translation if we need.
+        -:  535:   This function is used in case of REG_ICASE.  */
+        -:  536:
+        -:  537:static void
+function build_upper_buffer called 0 returned 0% blocks executed 0%
+    #####:  538:build_upper_buffer (re_string_t *pstr)
+        -:  539:{
+        -:  540:  Idx char_idx, end_idx;
+    #####:  541:  end_idx = (pstr->bufs_len > pstr->len) ? pstr->len : pstr->bufs_len;
+        -:  542:
+    #####:  543:  for (char_idx = pstr->valid_len; char_idx < end_idx; ++char_idx)
+branch  0 never executed
+branch  1 never executed
+        -:  544:    {
+    #####:  545:      int ch = pstr->raw_mbs[pstr->raw_mbs_idx + char_idx];
+    #####:  546:      if (__glibc_unlikely (pstr->trans != NULL))
+branch  0 never executed
+branch  1 never executed
+    #####:  547:	ch = pstr->trans[ch];
+    #####:  548:      pstr->mbs[char_idx] = toupper (ch);
+        -:  549:    }
+    #####:  550:  pstr->valid_len = char_idx;
+    #####:  551:  pstr->valid_raw_len = char_idx;
+    #####:  552:}
+        -:  553:
+        -:  554:/* Apply TRANS to the buffer in PSTR.  */
+        -:  555:
+        -:  556:static void
+function re_string_translate_buffer called 0 returned 0% blocks executed 0%
+    #####:  557:re_string_translate_buffer (re_string_t *pstr)
+        -:  558:{
+        -:  559:  Idx buf_idx, end_idx;
+    #####:  560:  end_idx = (pstr->bufs_len > pstr->len) ? pstr->len : pstr->bufs_len;
+        -:  561:
+    #####:  562:  for (buf_idx = pstr->valid_len; buf_idx < end_idx; ++buf_idx)
+branch  0 never executed
+branch  1 never executed
+        -:  563:    {
+    #####:  564:      int ch = pstr->raw_mbs[pstr->raw_mbs_idx + buf_idx];
+    #####:  565:      pstr->mbs[buf_idx] = pstr->trans[ch];
+        -:  566:    }
+        -:  567:
+    #####:  568:  pstr->valid_len = buf_idx;
+    #####:  569:  pstr->valid_raw_len = buf_idx;
+    #####:  570:}
+        -:  571:
+        -:  572:/* This function re-construct the buffers.
+        -:  573:   Concretely, convert to wide character in case of pstr->mb_cur_max > 1,
+        -:  574:   convert to upper case in case of REG_ICASE, apply translation.  */
+        -:  575:
+        -:  576:static reg_errcode_t
+        -:  577:__attribute_warn_unused_result__
+function re_string_reconstruct called 0 returned 0% blocks executed 0%
+    #####:  578:re_string_reconstruct (re_string_t *pstr, Idx idx, int eflags)
+        -:  579:{
+        -:  580:  Idx offset;
+        -:  581:
+    #####:  582:  if (__glibc_unlikely (pstr->raw_mbs_idx <= idx))
+branch  0 never executed
+branch  1 never executed
+    #####:  583:    offset = idx - pstr->raw_mbs_idx;
+        -:  584:  else
+        -:  585:    {
+        -:  586:      /* Reset buffer.  */
+        -:  587:#ifdef RE_ENABLE_I18N
+    #####:  588:      if (pstr->mb_cur_max > 1)
+branch  0 never executed
+branch  1 never executed
+    #####:  589:	memset (&pstr->cur_state, '\0', sizeof (mbstate_t));
+        -:  590:#endif /* RE_ENABLE_I18N */
+    #####:  591:      pstr->len = pstr->raw_len;
+    #####:  592:      pstr->stop = pstr->raw_stop;
+    #####:  593:      pstr->valid_len = 0;
+    #####:  594:      pstr->raw_mbs_idx = 0;
+    #####:  595:      pstr->valid_raw_len = 0;
+    #####:  596:      pstr->offsets_needed = 0;
+    #####:  597:      pstr->tip_context = ((eflags & REG_NOTBOL) ? CONTEXT_BEGBUF
+    #####:  598:			   : CONTEXT_NEWLINE | CONTEXT_BEGBUF);
+branch  0 never executed
+branch  1 never executed
+    #####:  599:      if (!pstr->mbs_allocated)
+branch  0 never executed
+branch  1 never executed
+    #####:  600:	pstr->mbs = (unsigned char *) pstr->raw_mbs;
+    #####:  601:      offset = idx;
+        -:  602:    }
+        -:  603:
+    #####:  604:  if (__glibc_likely (offset != 0))
+branch  0 never executed
+branch  1 never executed
+        -:  605:    {
+        -:  606:      /* Should the already checked characters be kept?  */
+    #####:  607:      if (__glibc_likely (offset < pstr->valid_raw_len))
+branch  0 never executed
+branch  1 never executed
+        -:  608:	{
+        -:  609:	  /* Yes, move them to the front of the buffer.  */
+        -:  610:#ifdef RE_ENABLE_I18N
+    #####:  611:	  if (__glibc_unlikely (pstr->offsets_needed))
+branch  0 never executed
+branch  1 never executed
+        -:  612:	    {
+    #####:  613:	      Idx low = 0, high = pstr->valid_len, mid;
+        -:  614:	      do
+        -:  615:		{
+    #####:  616:		  mid = (high + low) / 2;
+    #####:  617:		  if (pstr->offsets[mid] > offset)
+branch  0 never executed
+branch  1 never executed
+    #####:  618:		    high = mid;
+    #####:  619:		  else if (pstr->offsets[mid] < offset)
+branch  0 never executed
+branch  1 never executed
+    #####:  620:		    low = mid + 1;
+        -:  621:		  else
+    #####:  622:		    break;
+        -:  623:		}
+    #####:  624:	      while (low < high);
+branch  0 never executed
+branch  1 never executed
+    #####:  625:	      if (pstr->offsets[mid] < offset)
+branch  0 never executed
+branch  1 never executed
+    #####:  626:		++mid;
+    #####:  627:	      pstr->tip_context = re_string_context_at (pstr, mid - 1,
+        -:  628:							eflags);
+        -:  629:	      /* This can be quite complicated, so handle specially
+        -:  630:		 only the common and easy case where the character with
+        -:  631:		 different length representation of lower and upper
+        -:  632:		 case is present at or after offset.  */
+    #####:  633:	      if (pstr->valid_len > offset
+branch  0 never executed
+branch  1 never executed
+    #####:  634:		  && mid == offset && pstr->offsets[mid] == offset)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  635:		{
+    #####:  636:		  memmove (pstr->wcs, pstr->wcs + offset,
+    #####:  637:			   (pstr->valid_len - offset) * sizeof (wint_t));
+    #####:  638:		  memmove (pstr->mbs, pstr->mbs + offset, pstr->valid_len - offset);
+    #####:  639:		  pstr->valid_len -= offset;
+    #####:  640:		  pstr->valid_raw_len -= offset;
+    #####:  641:		  for (low = 0; low < pstr->valid_len; low++)
+branch  0 never executed
+branch  1 never executed
+    #####:  642:		    pstr->offsets[low] = pstr->offsets[low + offset] - offset;
+        -:  643:		}
+        -:  644:	      else
+        -:  645:		{
+        -:  646:		  /* Otherwise, just find out how long the partial multibyte
+        -:  647:		     character at offset is and fill it with WEOF/255.  */
+    #####:  648:		  pstr->len = pstr->raw_len - idx + offset;
+    #####:  649:		  pstr->stop = pstr->raw_stop - idx + offset;
+    #####:  650:		  pstr->offsets_needed = 0;
+    #####:  651:		  while (mid > 0 && pstr->offsets[mid - 1] == offset)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  652:		    --mid;
+    #####:  653:		  while (mid < pstr->valid_len)
+branch  0 never executed
+branch  1 never executed
+    #####:  654:		    if (pstr->wcs[mid] != WEOF)
+branch  0 never executed
+branch  1 never executed
+    #####:  655:		      break;
+        -:  656:		    else
+    #####:  657:		      ++mid;
+    #####:  658:		  if (mid == pstr->valid_len)
+branch  0 never executed
+branch  1 never executed
+    #####:  659:		    pstr->valid_len = 0;
+        -:  660:		  else
+        -:  661:		    {
+    #####:  662:		      pstr->valid_len = pstr->offsets[mid] - offset;
+    #####:  663:		      if (pstr->valid_len)
+branch  0 never executed
+branch  1 never executed
+        -:  664:			{
+    #####:  665:			  for (low = 0; low < pstr->valid_len; ++low)
+branch  0 never executed
+branch  1 never executed
+    #####:  666:			    pstr->wcs[low] = WEOF;
+    #####:  667:			  memset (pstr->mbs, 255, pstr->valid_len);
+        -:  668:			}
+        -:  669:		    }
+    #####:  670:		  pstr->valid_raw_len = pstr->valid_len;
+        -:  671:		}
+        -:  672:	    }
+        -:  673:	  else
+        -:  674:#endif
+        -:  675:	    {
+    #####:  676:	      pstr->tip_context = re_string_context_at (pstr, offset - 1,
+        -:  677:							eflags);
+        -:  678:#ifdef RE_ENABLE_I18N
+    #####:  679:	      if (pstr->mb_cur_max > 1)
+branch  0 never executed
+branch  1 never executed
+    #####:  680:		memmove (pstr->wcs, pstr->wcs + offset,
+    #####:  681:			 (pstr->valid_len - offset) * sizeof (wint_t));
+        -:  682:#endif /* RE_ENABLE_I18N */
+    #####:  683:	      if (__glibc_unlikely (pstr->mbs_allocated))
+branch  0 never executed
+branch  1 never executed
+    #####:  684:		memmove (pstr->mbs, pstr->mbs + offset,
+    #####:  685:			 pstr->valid_len - offset);
+    #####:  686:	      pstr->valid_len -= offset;
+    #####:  687:	      pstr->valid_raw_len -= offset;
+    #####:  688:	      DEBUG_ASSERT (pstr->valid_len > 0);
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+        -:  689:	    }
+        -:  690:	}
+        -:  691:      else
+        -:  692:	{
+        -:  693:#ifdef RE_ENABLE_I18N
+        -:  694:	  /* No, skip all characters until IDX.  */
+    #####:  695:	  Idx prev_valid_len = pstr->valid_len;
+        -:  696:
+    #####:  697:	  if (__glibc_unlikely (pstr->offsets_needed))
+branch  0 never executed
+branch  1 never executed
+        -:  698:	    {
+    #####:  699:	      pstr->len = pstr->raw_len - idx + offset;
+    #####:  700:	      pstr->stop = pstr->raw_stop - idx + offset;
+    #####:  701:	      pstr->offsets_needed = 0;
+        -:  702:	    }
+        -:  703:#endif
+    #####:  704:	  pstr->valid_len = 0;
+        -:  705:#ifdef RE_ENABLE_I18N
+    #####:  706:	  if (pstr->mb_cur_max > 1)
+branch  0 never executed
+branch  1 never executed
+        -:  707:	    {
+        -:  708:	      Idx wcs_idx;
+    #####:  709:	      wint_t wc = WEOF;
+        -:  710:
+    #####:  711:	      if (pstr->is_utf8)
+branch  0 never executed
+branch  1 never executed
+        -:  712:		{
+        -:  713:		  const unsigned char *raw, *p, *end;
+        -:  714:
+        -:  715:		  /* Special case UTF-8.  Multi-byte chars start with any
+        -:  716:		     byte other than 0x80 - 0xbf.  */
+    #####:  717:		  raw = pstr->raw_mbs + pstr->raw_mbs_idx;
+    #####:  718:		  end = raw + (offset - pstr->mb_cur_max);
+    #####:  719:		  if (end < pstr->raw_mbs)
+branch  0 never executed
+branch  1 never executed
+    #####:  720:		    end = pstr->raw_mbs;
+    #####:  721:		  p = raw + offset - 1;
+        -:  722:#ifdef _LIBC
+        -:  723:		  /* We know the wchar_t encoding is UCS4, so for the simple
+        -:  724:		     case, ASCII characters, skip the conversion step.  */
+        -:  725:		  if (isascii (*p) && __glibc_likely (pstr->trans == NULL))
+        -:  726:		    {
+        -:  727:		      memset (&pstr->cur_state, '\0', sizeof (mbstate_t));
+        -:  728:		      /* pstr->valid_len = 0; */
+        -:  729:		      wc = (wchar_t) *p;
+        -:  730:		    }
+        -:  731:		  else
+        -:  732:#endif
+    #####:  733:		    for (; p >= end; --p)
+branch  0 never executed
+branch  1 never executed
+    #####:  734:		      if ((*p & 0xc0) != 0x80)
+branch  0 never executed
+branch  1 never executed
+        -:  735:			{
+        -:  736:			  mbstate_t cur_state;
+        -:  737:			  wchar_t wc2;
+    #####:  738:			  Idx mlen = raw + pstr->len - p;
+        -:  739:			  unsigned char buf[6];
+        -:  740:			  size_t mbclen;
+        -:  741:
+    #####:  742:			  const unsigned char *pp = p;
+    #####:  743:			  if (__glibc_unlikely (pstr->trans != NULL))
+branch  0 never executed
+branch  1 never executed
+        -:  744:			    {
+    #####:  745:			      int i = mlen < 6 ? mlen : 6;
+    #####:  746:			      while (--i >= 0)
+branch  0 never executed
+branch  1 never executed
+    #####:  747:				buf[i] = pstr->trans[p[i]];
+    #####:  748:			      pp = buf;
+        -:  749:			    }
+        -:  750:			  /* XXX Don't use mbrtowc, we know which conversion
+        -:  751:			     to use (UTF-8 -> UCS4).  */
+    #####:  752:			  memset (&cur_state, 0, sizeof (cur_state));
+    #####:  753:			  mbclen = __mbrtowc (&wc2, (const char *) pp, mlen,
+call    0 never executed
+        -:  754:					      &cur_state);
+    #####:  755:			  if (raw + offset - p <= mbclen
+branch  0 never executed
+branch  1 never executed
+    #####:  756:			      && mbclen < (size_t) -2)
+branch  0 never executed
+branch  1 never executed
+        -:  757:			    {
+    #####:  758:			      memset (&pstr->cur_state, '\0',
+        -:  759:				      sizeof (mbstate_t));
+    #####:  760:			      pstr->valid_len = mbclen - (raw + offset - p);
+    #####:  761:			      wc = wc2;
+        -:  762:			    }
+    #####:  763:			  break;
+        -:  764:			}
+        -:  765:		}
+        -:  766:
+    #####:  767:	      if (wc == WEOF)
+branch  0 never executed
+branch  1 never executed
+    #####:  768:		pstr->valid_len = re_string_skip_chars (pstr, idx, &wc) - idx;
+call    0 never executed
+    #####:  769:	      if (wc == WEOF)
+branch  0 never executed
+branch  1 never executed
+        -:  770:		pstr->tip_context
+    #####:  771:		  = re_string_context_at (pstr, prev_valid_len - 1, eflags);
+        -:  772:	      else
+    #####:  773:		pstr->tip_context = ((__glibc_unlikely (pstr->word_ops_used != 0)
+    #####:  774:				      && IS_WIDE_WORD_CHAR (wc))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  775:				     ? CONTEXT_WORD
+    #####:  776:				     : ((IS_WIDE_NEWLINE (wc)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  777:					 && pstr->newline_anchor)
+branch  0 never executed
+branch  1 never executed
+        -:  778:					? CONTEXT_NEWLINE : 0));
+    #####:  779:	      if (__glibc_unlikely (pstr->valid_len))
+branch  0 never executed
+branch  1 never executed
+        -:  780:		{
+    #####:  781:		  for (wcs_idx = 0; wcs_idx < pstr->valid_len; ++wcs_idx)
+branch  0 never executed
+branch  1 never executed
+    #####:  782:		    pstr->wcs[wcs_idx] = WEOF;
+    #####:  783:		  if (pstr->mbs_allocated)
+branch  0 never executed
+branch  1 never executed
+    #####:  784:		    memset (pstr->mbs, 255, pstr->valid_len);
+        -:  785:		}
+    #####:  786:	      pstr->valid_raw_len = pstr->valid_len;
+        -:  787:	    }
+        -:  788:	  else
+        -:  789:#endif /* RE_ENABLE_I18N */
+        -:  790:	    {
+    #####:  791:	      int c = pstr->raw_mbs[pstr->raw_mbs_idx + offset - 1];
+    #####:  792:	      pstr->valid_raw_len = 0;
+    #####:  793:	      if (pstr->trans)
+branch  0 never executed
+branch  1 never executed
+    #####:  794:		c = pstr->trans[c];
+    #####:  795:	      pstr->tip_context = (bitset_contain (pstr->word_char, c)
+call    0 never executed
+        -:  796:				   ? CONTEXT_WORD
+    #####:  797:				   : ((IS_NEWLINE (c) && pstr->newline_anchor)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+        -:  798:				      ? CONTEXT_NEWLINE : 0));
+        -:  799:	    }
+        -:  800:	}
+    #####:  801:      if (!__glibc_unlikely (pstr->mbs_allocated))
+branch  0 never executed
+branch  1 never executed
+    #####:  802:	pstr->mbs += offset;
+        -:  803:    }
+    #####:  804:  pstr->raw_mbs_idx = idx;
+    #####:  805:  pstr->len -= offset;
+    #####:  806:  pstr->stop -= offset;
+        -:  807:
+        -:  808:  /* Then build the buffers.  */
+        -:  809:#ifdef RE_ENABLE_I18N
+    #####:  810:  if (pstr->mb_cur_max > 1)
+branch  0 never executed
+branch  1 never executed
+        -:  811:    {
+    #####:  812:      if (pstr->icase)
+branch  0 never executed
+branch  1 never executed
+        -:  813:	{
+    #####:  814:	  reg_errcode_t ret = build_wcs_upper_buffer (pstr);
+call    0 never executed
+    #####:  815:	  if (__glibc_unlikely (ret != REG_NOERROR))
+branch  0 never executed
+branch  1 never executed
+    #####:  816:	    return ret;
+        -:  817:	}
+        -:  818:      else
+    #####:  819:	build_wcs_buffer (pstr);
+call    0 never executed
+        -:  820:    }
+        -:  821:  else
+        -:  822:#endif /* RE_ENABLE_I18N */
+    #####:  823:    if (__glibc_unlikely (pstr->mbs_allocated))
+branch  0 never executed
+branch  1 never executed
+        -:  824:      {
+    #####:  825:	if (pstr->icase)
+branch  0 never executed
+branch  1 never executed
+    #####:  826:	  build_upper_buffer (pstr);
+call    0 never executed
+    #####:  827:	else if (pstr->trans != NULL)
+branch  0 never executed
+branch  1 never executed
+    #####:  828:	  re_string_translate_buffer (pstr);
+call    0 never executed
+        -:  829:      }
+        -:  830:    else
+    #####:  831:      pstr->valid_len = pstr->len;
+        -:  832:
+    #####:  833:  pstr->cur_idx = 0;
+    #####:  834:  return REG_NOERROR;
+        -:  835:}
+        -:  836:
+        -:  837:static unsigned char
+        -:  838:__attribute__ ((pure))
+function re_string_peek_byte_case called 0 returned 0% blocks executed 0%
+    #####:  839:re_string_peek_byte_case (const re_string_t *pstr, Idx idx)
+        -:  840:{
+        -:  841:  int ch;
+        -:  842:  Idx off;
+        -:  843:
+        -:  844:  /* Handle the common (easiest) cases first.  */
+    #####:  845:  if (__glibc_likely (!pstr->mbs_allocated))
+branch  0 never executed
+branch  1 never executed
+    #####:  846:    return re_string_peek_byte (pstr, idx);
+        -:  847:
+        -:  848:#ifdef RE_ENABLE_I18N
+    #####:  849:  if (pstr->mb_cur_max > 1
+branch  0 never executed
+branch  1 never executed
+    #####:  850:      && ! re_string_is_single_byte_char (pstr, pstr->cur_idx + idx))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+    #####:  851:    return re_string_peek_byte (pstr, idx);
+        -:  852:#endif
+        -:  853:
+    #####:  854:  off = pstr->cur_idx + idx;
+        -:  855:#ifdef RE_ENABLE_I18N
+    #####:  856:  if (pstr->offsets_needed)
+branch  0 never executed
+branch  1 never executed
+    #####:  857:    off = pstr->offsets[off];
+        -:  858:#endif
+        -:  859:
+    #####:  860:  ch = pstr->raw_mbs[pstr->raw_mbs_idx + off];
+        -:  861:
+        -:  862:#ifdef RE_ENABLE_I18N
+        -:  863:  /* Ensure that e.g. for tr_TR.UTF-8 BACKSLASH DOTLESS SMALL LETTER I
+        -:  864:     this function returns CAPITAL LETTER I instead of first byte of
+        -:  865:     DOTLESS SMALL LETTER I.  The latter would confuse the parser,
+        -:  866:     since peek_byte_case doesn't advance cur_idx in any way.  */
+    #####:  867:  if (pstr->offsets_needed && !isascii (ch))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  868:    return re_string_peek_byte (pstr, idx);
+        -:  869:#endif
+        -:  870:
+    #####:  871:  return ch;
+        -:  872:}
+        -:  873:
+        -:  874:static unsigned char
+function re_string_fetch_byte_case called 0 returned 0% blocks executed 0%
+    #####:  875:re_string_fetch_byte_case (re_string_t *pstr)
+        -:  876:{
+    #####:  877:  if (__glibc_likely (!pstr->mbs_allocated))
+branch  0 never executed
+branch  1 never executed
+    #####:  878:    return re_string_fetch_byte (pstr);
+        -:  879:
+        -:  880:#ifdef RE_ENABLE_I18N
+    #####:  881:  if (pstr->offsets_needed)
+branch  0 never executed
+branch  1 never executed
+        -:  882:    {
+        -:  883:      Idx off;
+        -:  884:      int ch;
+        -:  885:
+        -:  886:      /* For tr_TR.UTF-8 [[:islower:]] there is
+        -:  887:	 [[: CAPITAL LETTER I WITH DOT lower:]] in mbs.  Skip
+        -:  888:	 in that case the whole multi-byte character and return
+        -:  889:	 the original letter.  On the other side, with
+        -:  890:	 [[: DOTLESS SMALL LETTER I return [[:I, as doing
+        -:  891:	 anything else would complicate things too much.  */
+        -:  892:
+    #####:  893:      if (!re_string_first_byte (pstr, pstr->cur_idx))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  894:	return re_string_fetch_byte (pstr);
+        -:  895:
+    #####:  896:      off = pstr->offsets[pstr->cur_idx];
+    #####:  897:      ch = pstr->raw_mbs[pstr->raw_mbs_idx + off];
+        -:  898:
+    #####:  899:      if (! isascii (ch))
+branch  0 never executed
+branch  1 never executed
+    #####:  900:	return re_string_fetch_byte (pstr);
+        -:  901:
+    #####:  902:      re_string_skip_bytes (pstr,
+        -:  903:			    re_string_char_size_at (pstr, pstr->cur_idx));
+    #####:  904:      return ch;
+        -:  905:    }
+        -:  906:#endif
+        -:  907:
+    #####:  908:  return pstr->raw_mbs[pstr->raw_mbs_idx + pstr->cur_idx++];
+        -:  909:}
+        -:  910:
+        -:  911:static void
+function re_string_destruct called 0 returned 0% blocks executed 0%
+    #####:  912:re_string_destruct (re_string_t *pstr)
+        -:  913:{
+        -:  914:#ifdef RE_ENABLE_I18N
+    #####:  915:  re_free (pstr->wcs);
+    #####:  916:  re_free (pstr->offsets);
+        -:  917:#endif /* RE_ENABLE_I18N  */
+    #####:  918:  if (pstr->mbs_allocated)
+branch  0 never executed
+branch  1 never executed
+    #####:  919:    re_free (pstr->mbs);
+    #####:  920:}
+        -:  921:
+        -:  922:/* Return the context at IDX in INPUT.  */
+        -:  923:
+        -:  924:static unsigned int
+function re_string_context_at called 0 returned 0% blocks executed 0%
+    #####:  925:re_string_context_at (const re_string_t *input, Idx idx, int eflags)
+        -:  926:{
+        -:  927:  int c;
+    #####:  928:  if (__glibc_unlikely (idx < 0))
+branch  0 never executed
+branch  1 never executed
+        -:  929:    /* In this case, we use the value stored in input->tip_context,
+        -:  930:       since we can't know the character in input->mbs[-1] here.  */
+    #####:  931:    return input->tip_context;
+    #####:  932:  if (__glibc_unlikely (idx == input->len))
+branch  0 never executed
+branch  1 never executed
+    #####:  933:    return ((eflags & REG_NOTEOL) ? CONTEXT_ENDBUF
+    #####:  934:	    : CONTEXT_NEWLINE | CONTEXT_ENDBUF);
+branch  0 never executed
+branch  1 never executed
+        -:  935:#ifdef RE_ENABLE_I18N
+    #####:  936:  if (input->mb_cur_max > 1)
+branch  0 never executed
+branch  1 never executed
+        -:  937:    {
+        -:  938:      wint_t wc;
+    #####:  939:      Idx wc_idx = idx;
+    #####:  940:      while(input->wcs[wc_idx] == WEOF)
+branch  0 never executed
+branch  1 never executed
+        -:  941:	{
+    #####:  942:	  DEBUG_ASSERT (wc_idx >= 0);
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+    #####:  943:	  --wc_idx;
+    #####:  944:	  if (wc_idx < 0)
+branch  0 never executed
+branch  1 never executed
+    #####:  945:	    return input->tip_context;
+        -:  946:	}
+    #####:  947:      wc = input->wcs[wc_idx];
+    #####:  948:      if (__glibc_unlikely (input->word_ops_used != 0)
+branch  0 never executed
+branch  1 never executed
+    #####:  949:	  && IS_WIDE_WORD_CHAR (wc))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  950:	return CONTEXT_WORD;
+    #####:  951:      return (IS_WIDE_NEWLINE (wc) && input->newline_anchor
+branch  0 never executed
+branch  1 never executed
+    #####:  952:	      ? CONTEXT_NEWLINE : 0);
+branch  0 never executed
+branch  1 never executed
+        -:  953:    }
+        -:  954:  else
+        -:  955:#endif
+        -:  956:    {
+    #####:  957:      c = re_string_byte_at (input, idx);
+    #####:  958:      if (bitset_contain (input->word_char, c))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####:  959:	return CONTEXT_WORD;
+    #####:  960:      return IS_NEWLINE (c) && input->newline_anchor ? CONTEXT_NEWLINE : 0;
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  961:    }
+        -:  962:}
+        -:  963:
+        -:  964:/* Functions for set operation.  */
+        -:  965:
+        -:  966:static reg_errcode_t
+        -:  967:__attribute_warn_unused_result__
+function re_node_set_alloc called 0 returned 0% blocks executed 0%
+    #####:  968:re_node_set_alloc (re_node_set *set, Idx size)
+        -:  969:{
+    #####:  970:  set->alloc = size;
+    #####:  971:  set->nelem = 0;
+    #####:  972:  set->elems = re_malloc (Idx, size);
+    #####:  973:  if (__glibc_unlikely (set->elems == NULL)
+branch  0 never executed
+branch  1 never executed
+        -:  974:      && (MALLOC_0_IS_NONNULL || size != 0))
+    #####:  975:    return REG_ESPACE;
+    #####:  976:  return REG_NOERROR;
+        -:  977:}
+        -:  978:
+        -:  979:static reg_errcode_t
+        -:  980:__attribute_warn_unused_result__
+function re_node_set_init_1 called 0 returned 0% blocks executed 0%
+    #####:  981:re_node_set_init_1 (re_node_set *set, Idx elem)
+        -:  982:{
+    #####:  983:  set->alloc = 1;
+    #####:  984:  set->nelem = 1;
+    #####:  985:  set->elems = re_malloc (Idx, 1);
+    #####:  986:  if (__glibc_unlikely (set->elems == NULL))
+branch  0 never executed
+branch  1 never executed
+        -:  987:    {
+    #####:  988:      set->alloc = set->nelem = 0;
+    #####:  989:      return REG_ESPACE;
+        -:  990:    }
+    #####:  991:  set->elems[0] = elem;
+    #####:  992:  return REG_NOERROR;
+        -:  993:}
+        -:  994:
+        -:  995:static reg_errcode_t
+        -:  996:__attribute_warn_unused_result__
+function re_node_set_init_2 called 0 returned 0% blocks executed 0%
+    #####:  997:re_node_set_init_2 (re_node_set *set, Idx elem1, Idx elem2)
+        -:  998:{
+    #####:  999:  set->alloc = 2;
+    #####: 1000:  set->elems = re_malloc (Idx, 2);
+    #####: 1001:  if (__glibc_unlikely (set->elems == NULL))
+branch  0 never executed
+branch  1 never executed
+    #####: 1002:    return REG_ESPACE;
+    #####: 1003:  if (elem1 == elem2)
+branch  0 never executed
+branch  1 never executed
+        -: 1004:    {
+    #####: 1005:      set->nelem = 1;
+    #####: 1006:      set->elems[0] = elem1;
+        -: 1007:    }
+        -: 1008:  else
+        -: 1009:    {
+    #####: 1010:      set->nelem = 2;
+    #####: 1011:      if (elem1 < elem2)
+branch  0 never executed
+branch  1 never executed
+        -: 1012:	{
+    #####: 1013:	  set->elems[0] = elem1;
+    #####: 1014:	  set->elems[1] = elem2;
+        -: 1015:	}
+        -: 1016:      else
+        -: 1017:	{
+    #####: 1018:	  set->elems[0] = elem2;
+    #####: 1019:	  set->elems[1] = elem1;
+        -: 1020:	}
+        -: 1021:    }
+    #####: 1022:  return REG_NOERROR;
+        -: 1023:}
+        -: 1024:
+        -: 1025:static reg_errcode_t
+        -: 1026:__attribute_warn_unused_result__
+function re_node_set_init_copy called 0 returned 0% blocks executed 0%
+    #####: 1027:re_node_set_init_copy (re_node_set *dest, const re_node_set *src)
+        -: 1028:{
+    #####: 1029:  dest->nelem = src->nelem;
+    #####: 1030:  if (src->nelem > 0)
+branch  0 never executed
+branch  1 never executed
+        -: 1031:    {
+    #####: 1032:      dest->alloc = dest->nelem;
+    #####: 1033:      dest->elems = re_malloc (Idx, dest->alloc);
+    #####: 1034:      if (__glibc_unlikely (dest->elems == NULL))
+branch  0 never executed
+branch  1 never executed
+        -: 1035:	{
+    #####: 1036:	  dest->alloc = dest->nelem = 0;
+    #####: 1037:	  return REG_ESPACE;
+        -: 1038:	}
+    #####: 1039:      memcpy (dest->elems, src->elems, src->nelem * sizeof (Idx));
+        -: 1040:    }
+        -: 1041:  else
+    #####: 1042:    re_node_set_init_empty (dest);
+    #####: 1043:  return REG_NOERROR;
+        -: 1044:}
+        -: 1045:
+        -: 1046:/* Calculate the intersection of the sets SRC1 and SRC2. And merge it to
+        -: 1047:   DEST. Return value indicate the error code or REG_NOERROR if succeeded.
+        -: 1048:   Note: We assume dest->elems is NULL, when dest->alloc is 0.  */
+        -: 1049:
+        -: 1050:static reg_errcode_t
+        -: 1051:__attribute_warn_unused_result__
+function re_node_set_add_intersect called 0 returned 0% blocks executed 0%
+    #####: 1052:re_node_set_add_intersect (re_node_set *dest, const re_node_set *src1,
+        -: 1053:			   const re_node_set *src2)
+        -: 1054:{
+        -: 1055:  Idx i1, i2, is, id, delta, sbase;
+    #####: 1056:  if (src1->nelem == 0 || src2->nelem == 0)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1057:    return REG_NOERROR;
+        -: 1058:
+        -: 1059:  /* We need dest->nelem + 2 * elems_in_intersection; this is a
+        -: 1060:     conservative estimate.  */
+    #####: 1061:  if (src1->nelem + src2->nelem + dest->nelem > dest->alloc)
+branch  0 never executed
+branch  1 never executed
+        -: 1062:    {
+    #####: 1063:      Idx new_alloc = src1->nelem + src2->nelem + dest->alloc;
+    #####: 1064:      Idx *new_elems = re_realloc (dest->elems, Idx, new_alloc);
+    #####: 1065:      if (__glibc_unlikely (new_elems == NULL))
+branch  0 never executed
+branch  1 never executed
+    #####: 1066:	return REG_ESPACE;
+    #####: 1067:      dest->elems = new_elems;
+    #####: 1068:      dest->alloc = new_alloc;
+        -: 1069:    }
+        -: 1070:
+        -: 1071:  /* Find the items in the intersection of SRC1 and SRC2, and copy
+        -: 1072:     into the top of DEST those that are not already in DEST itself.  */
+    #####: 1073:  sbase = dest->nelem + src1->nelem + src2->nelem;
+    #####: 1074:  i1 = src1->nelem - 1;
+    #####: 1075:  i2 = src2->nelem - 1;
+    #####: 1076:  id = dest->nelem - 1;
+        -: 1077:  for (;;)
+        -: 1078:    {
+    #####: 1079:      if (src1->elems[i1] == src2->elems[i2])
+branch  0 never executed
+branch  1 never executed
+        -: 1080:	{
+        -: 1081:	  /* Try to find the item in DEST.  Maybe we could binary search?  */
+    #####: 1082:	  while (id >= 0 && dest->elems[id] > src1->elems[i1])
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1083:	    --id;
+        -: 1084:
+    #####: 1085:	  if (id < 0 || dest->elems[id] != src1->elems[i1])
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1086:            dest->elems[--sbase] = src1->elems[i1];
+        -: 1087:
+    #####: 1088:	  if (--i1 < 0 || --i2 < 0)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -: 1089:	    break;
+        -: 1090:	}
+        -: 1091:
+        -: 1092:      /* Lower the highest of the two items.  */
+    #####: 1093:      else if (src1->elems[i1] < src2->elems[i2])
+branch  0 never executed
+branch  1 never executed
+        -: 1094:	{
+    #####: 1095:	  if (--i2 < 0)
+branch  0 never executed
+branch  1 never executed
+    #####: 1096:	    break;
+        -: 1097:	}
+        -: 1098:      else
+        -: 1099:	{
+    #####: 1100:	  if (--i1 < 0)
+branch  0 never executed
+branch  1 never executed
+    #####: 1101:	    break;
+        -: 1102:	}
+        -: 1103:    }
+        -: 1104:
+    #####: 1105:  id = dest->nelem - 1;
+    #####: 1106:  is = dest->nelem + src1->nelem + src2->nelem - 1;
+    #####: 1107:  delta = is - sbase + 1;
+        -: 1108:
+        -: 1109:  /* Now copy.  When DELTA becomes zero, the remaining
+        -: 1110:     DEST elements are already in place; this is more or
+        -: 1111:     less the same loop that is in re_node_set_merge.  */
+    #####: 1112:  dest->nelem += delta;
+    #####: 1113:  if (delta > 0 && id >= 0)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -: 1114:    for (;;)
+        -: 1115:      {
+    #####: 1116:	if (dest->elems[is] > dest->elems[id])
+branch  0 never executed
+branch  1 never executed
+        -: 1117:	  {
+        -: 1118:	    /* Copy from the top.  */
+    #####: 1119:	    dest->elems[id + delta--] = dest->elems[is--];
+    #####: 1120:	    if (delta == 0)
+branch  0 never executed
+branch  1 never executed
+    #####: 1121:	      break;
+        -: 1122:	  }
+        -: 1123:	else
+        -: 1124:	  {
+        -: 1125:	    /* Slide from the bottom.  */
+    #####: 1126:	    dest->elems[id + delta] = dest->elems[id];
+    #####: 1127:	    if (--id < 0)
+branch  0 never executed
+branch  1 never executed
+    #####: 1128:	      break;
+        -: 1129:	  }
+        -: 1130:      }
+        -: 1131:
+        -: 1132:  /* Copy remaining SRC elements.  */
+    #####: 1133:  memcpy (dest->elems, dest->elems + sbase, delta * sizeof (Idx));
+        -: 1134:
+    #####: 1135:  return REG_NOERROR;
+        -: 1136:}
+        -: 1137:
+        -: 1138:/* Calculate the union set of the sets SRC1 and SRC2. And store it to
+        -: 1139:   DEST. Return value indicate the error code or REG_NOERROR if succeeded.  */
+        -: 1140:
+        -: 1141:static reg_errcode_t
+        -: 1142:__attribute_warn_unused_result__
+function re_node_set_init_union called 0 returned 0% blocks executed 0%
+    #####: 1143:re_node_set_init_union (re_node_set *dest, const re_node_set *src1,
+        -: 1144:			const re_node_set *src2)
+        -: 1145:{
+        -: 1146:  Idx i1, i2, id;
+    #####: 1147:  if (src1 != NULL && src1->nelem > 0 && src2 != NULL && src2->nelem > 0)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+branch  7 never executed
+        -: 1148:    {
+    #####: 1149:      dest->alloc = src1->nelem + src2->nelem;
+    #####: 1150:      dest->elems = re_malloc (Idx, dest->alloc);
+    #####: 1151:      if (__glibc_unlikely (dest->elems == NULL))
+branch  0 never executed
+branch  1 never executed
+    #####: 1152:	return REG_ESPACE;
+        -: 1153:    }
+        -: 1154:  else
+        -: 1155:    {
+    #####: 1156:      if (src1 != NULL && src1->nelem > 0)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1157:	return re_node_set_init_copy (dest, src1);
+call    0 never executed
+    #####: 1158:      else if (src2 != NULL && src2->nelem > 0)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1159:	return re_node_set_init_copy (dest, src2);
+call    0 never executed
+        -: 1160:      else
+    #####: 1161:	re_node_set_init_empty (dest);
+    #####: 1162:      return REG_NOERROR;
+        -: 1163:    }
+    #####: 1164:  for (i1 = i2 = id = 0 ; i1 < src1->nelem && i2 < src2->nelem ;)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -: 1165:    {
+    #####: 1166:      if (src1->elems[i1] > src2->elems[i2])
+branch  0 never executed
+branch  1 never executed
+        -: 1167:	{
+    #####: 1168:	  dest->elems[id++] = src2->elems[i2++];
+    #####: 1169:	  continue;
+        -: 1170:	}
+    #####: 1171:      if (src1->elems[i1] == src2->elems[i2])
+branch  0 never executed
+branch  1 never executed
+    #####: 1172:	++i2;
+    #####: 1173:      dest->elems[id++] = src1->elems[i1++];
+        -: 1174:    }
+    #####: 1175:  if (i1 < src1->nelem)
+branch  0 never executed
+branch  1 never executed
+        -: 1176:    {
+    #####: 1177:      memcpy (dest->elems + id, src1->elems + i1,
+    #####: 1178:	     (src1->nelem - i1) * sizeof (Idx));
+    #####: 1179:      id += src1->nelem - i1;
+        -: 1180:    }
+    #####: 1181:  else if (i2 < src2->nelem)
+branch  0 never executed
+branch  1 never executed
+        -: 1182:    {
+    #####: 1183:      memcpy (dest->elems + id, src2->elems + i2,
+    #####: 1184:	     (src2->nelem - i2) * sizeof (Idx));
+    #####: 1185:      id += src2->nelem - i2;
+        -: 1186:    }
+    #####: 1187:  dest->nelem = id;
+    #####: 1188:  return REG_NOERROR;
+        -: 1189:}
+        -: 1190:
+        -: 1191:/* Calculate the union set of the sets DEST and SRC. And store it to
+        -: 1192:   DEST. Return value indicate the error code or REG_NOERROR if succeeded.  */
+        -: 1193:
+        -: 1194:static reg_errcode_t
+        -: 1195:__attribute_warn_unused_result__
+function re_node_set_merge called 0 returned 0% blocks executed 0%
+    #####: 1196:re_node_set_merge (re_node_set *dest, const re_node_set *src)
+        -: 1197:{
+        -: 1198:  Idx is, id, sbase, delta;
+    #####: 1199:  if (src == NULL || src->nelem == 0)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1200:    return REG_NOERROR;
+    #####: 1201:  if (dest->alloc < 2 * src->nelem + dest->nelem)
+branch  0 never executed
+branch  1 never executed
+        -: 1202:    {
+    #####: 1203:      Idx new_alloc = 2 * (src->nelem + dest->alloc);
+    #####: 1204:      Idx *new_buffer = re_realloc (dest->elems, Idx, new_alloc);
+    #####: 1205:      if (__glibc_unlikely (new_buffer == NULL))
+branch  0 never executed
+branch  1 never executed
+    #####: 1206:	return REG_ESPACE;
+    #####: 1207:      dest->elems = new_buffer;
+    #####: 1208:      dest->alloc = new_alloc;
+        -: 1209:    }
+        -: 1210:
+    #####: 1211:  if (__glibc_unlikely (dest->nelem == 0))
+branch  0 never executed
+branch  1 never executed
+        -: 1212:    {
+    #####: 1213:      dest->nelem = src->nelem;
+    #####: 1214:      memcpy (dest->elems, src->elems, src->nelem * sizeof (Idx));
+    #####: 1215:      return REG_NOERROR;
+        -: 1216:    }
+        -: 1217:
+        -: 1218:  /* Copy into the top of DEST the items of SRC that are not
+        -: 1219:     found in DEST.  Maybe we could binary search in DEST?  */
+    #####: 1220:  for (sbase = dest->nelem + 2 * src->nelem,
+branch  0 never executed
+branch  1 never executed
+    #####: 1221:       is = src->nelem - 1, id = dest->nelem - 1; is >= 0 && id >= 0; )
+branch  0 never executed
+branch  1 never executed
+        -: 1222:    {
+    #####: 1223:      if (dest->elems[id] == src->elems[is])
+branch  0 never executed
+branch  1 never executed
+    #####: 1224:	is--, id--;
+    #####: 1225:      else if (dest->elems[id] < src->elems[is])
+branch  0 never executed
+branch  1 never executed
+    #####: 1226:	dest->elems[--sbase] = src->elems[is--];
+        -: 1227:      else /* if (dest->elems[id] > src->elems[is]) */
+    #####: 1228:	--id;
+        -: 1229:    }
+        -: 1230:
+    #####: 1231:  if (is >= 0)
+branch  0 never executed
+branch  1 never executed
+        -: 1232:    {
+        -: 1233:      /* If DEST is exhausted, the remaining items of SRC must be unique.  */
+    #####: 1234:      sbase -= is + 1;
+    #####: 1235:      memcpy (dest->elems + sbase, src->elems, (is + 1) * sizeof (Idx));
+        -: 1236:    }
+        -: 1237:
+    #####: 1238:  id = dest->nelem - 1;
+    #####: 1239:  is = dest->nelem + 2 * src->nelem - 1;
+    #####: 1240:  delta = is - sbase + 1;
+    #####: 1241:  if (delta == 0)
+branch  0 never executed
+branch  1 never executed
+    #####: 1242:    return REG_NOERROR;
+        -: 1243:
+        -: 1244:  /* Now copy.  When DELTA becomes zero, the remaining
+        -: 1245:     DEST elements are already in place.  */
+    #####: 1246:  dest->nelem += delta;
+        -: 1247:  for (;;)
+        -: 1248:    {
+    #####: 1249:      if (dest->elems[is] > dest->elems[id])
+branch  0 never executed
+branch  1 never executed
+        -: 1250:	{
+        -: 1251:	  /* Copy from the top.  */
+    #####: 1252:	  dest->elems[id + delta--] = dest->elems[is--];
+    #####: 1253:	  if (delta == 0)
+branch  0 never executed
+branch  1 never executed
+    #####: 1254:	    break;
+        -: 1255:	}
+        -: 1256:      else
+        -: 1257:	{
+        -: 1258:	  /* Slide from the bottom.  */
+    #####: 1259:	  dest->elems[id + delta] = dest->elems[id];
+    #####: 1260:	  if (--id < 0)
+branch  0 never executed
+branch  1 never executed
+        -: 1261:	    {
+        -: 1262:	      /* Copy remaining SRC elements.  */
+    #####: 1263:	      memcpy (dest->elems, dest->elems + sbase,
+        -: 1264:		      delta * sizeof (Idx));
+    #####: 1265:	      break;
+        -: 1266:	    }
+        -: 1267:	}
+        -: 1268:    }
+        -: 1269:
+    #####: 1270:  return REG_NOERROR;
+        -: 1271:}
+        -: 1272:
+        -: 1273:/* Insert the new element ELEM to the re_node_set* SET.
+        -: 1274:   SET should not already have ELEM.
+        -: 1275:   Return true if successful.  */
+        -: 1276:
+        -: 1277:static bool
+        -: 1278:__attribute_warn_unused_result__
+function re_node_set_insert called 0 returned 0% blocks executed 0%
+    #####: 1279:re_node_set_insert (re_node_set *set, Idx elem)
+        -: 1280:{
+        -: 1281:  Idx idx;
+        -: 1282:  /* In case the set is empty.  */
+    #####: 1283:  if (set->alloc == 0)
+branch  0 never executed
+branch  1 never executed
+    #####: 1284:    return __glibc_likely (re_node_set_init_1 (set, elem) == REG_NOERROR);
+call    0 never executed
+        -: 1285:
+    #####: 1286:  if (__glibc_unlikely (set->nelem) == 0)
+branch  0 never executed
+branch  1 never executed
+        -: 1287:    {
+        -: 1288:      /* We already guaranteed above that set->alloc != 0.  */
+    #####: 1289:      set->elems[0] = elem;
+    #####: 1290:      ++set->nelem;
+    #####: 1291:      return true;
+        -: 1292:    }
+        -: 1293:
+        -: 1294:  /* Realloc if we need.  */
+    #####: 1295:  if (set->alloc == set->nelem)
+branch  0 never executed
+branch  1 never executed
+        -: 1296:    {
+        -: 1297:      Idx *new_elems;
+    #####: 1298:      set->alloc = set->alloc * 2;
+    #####: 1299:      new_elems = re_realloc (set->elems, Idx, set->alloc);
+    #####: 1300:      if (__glibc_unlikely (new_elems == NULL))
+branch  0 never executed
+branch  1 never executed
+    #####: 1301:	return false;
+    #####: 1302:      set->elems = new_elems;
+        -: 1303:    }
+        -: 1304:
+        -: 1305:  /* Move the elements which follows the new element.  Test the
+        -: 1306:     first element separately to skip a check in the inner loop.  */
+    #####: 1307:  if (elem < set->elems[0])
+branch  0 never executed
+branch  1 never executed
+        -: 1308:    {
+    #####: 1309:      for (idx = set->nelem; idx > 0; idx--)
+branch  0 never executed
+branch  1 never executed
+    #####: 1310:	set->elems[idx] = set->elems[idx - 1];
+        -: 1311:    }
+        -: 1312:  else
+        -: 1313:    {
+    #####: 1314:      for (idx = set->nelem; set->elems[idx - 1] > elem; idx--)
+branch  0 never executed
+branch  1 never executed
+    #####: 1315:	set->elems[idx] = set->elems[idx - 1];
+        -: 1316:    }
+        -: 1317:
+        -: 1318:  /* Insert the new element.  */
+    #####: 1319:  set->elems[idx] = elem;
+    #####: 1320:  ++set->nelem;
+    #####: 1321:  return true;
+        -: 1322:}
+        -: 1323:
+        -: 1324:/* Insert the new element ELEM to the re_node_set* SET.
+        -: 1325:   SET should not already have any element greater than or equal to ELEM.
+        -: 1326:   Return true if successful.  */
+        -: 1327:
+        -: 1328:static bool
+        -: 1329:__attribute_warn_unused_result__
+function re_node_set_insert_last called 0 returned 0% blocks executed 0%
+    #####: 1330:re_node_set_insert_last (re_node_set *set, Idx elem)
+        -: 1331:{
+        -: 1332:  /* Realloc if we need.  */
+    #####: 1333:  if (set->alloc == set->nelem)
+branch  0 never executed
+branch  1 never executed
+        -: 1334:    {
+        -: 1335:      Idx *new_elems;
+    #####: 1336:      set->alloc = (set->alloc + 1) * 2;
+    #####: 1337:      new_elems = re_realloc (set->elems, Idx, set->alloc);
+    #####: 1338:      if (__glibc_unlikely (new_elems == NULL))
+branch  0 never executed
+branch  1 never executed
+    #####: 1339:	return false;
+    #####: 1340:      set->elems = new_elems;
+        -: 1341:    }
+        -: 1342:
+        -: 1343:  /* Insert the new element.  */
+    #####: 1344:  set->elems[set->nelem++] = elem;
+    #####: 1345:  return true;
+        -: 1346:}
+        -: 1347:
+        -: 1348:/* Compare two node sets SET1 and SET2.
+        -: 1349:   Return true if SET1 and SET2 are equivalent.  */
+        -: 1350:
+        -: 1351:static bool
+        -: 1352:__attribute__ ((pure))
+function re_node_set_compare called 0 returned 0% blocks executed 0%
+    #####: 1353:re_node_set_compare (const re_node_set *set1, const re_node_set *set2)
+        -: 1354:{
+        -: 1355:  Idx i;
+    #####: 1356:  if (set1 == NULL || set2 == NULL || set1->nelem != set2->nelem)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+    #####: 1357:    return false;
+    #####: 1358:  for (i = set1->nelem ; --i >= 0 ; )
+branch  0 never executed
+branch  1 never executed
+    #####: 1359:    if (set1->elems[i] != set2->elems[i])
+branch  0 never executed
+branch  1 never executed
+    #####: 1360:      return false;
+    #####: 1361:  return true;
+        -: 1362:}
+        -: 1363:
+        -: 1364:/* Return (idx + 1) if SET contains the element ELEM, return 0 otherwise.  */
+        -: 1365:
+        -: 1366:static Idx
+        -: 1367:__attribute__ ((pure))
+function re_node_set_contains called 0 returned 0% blocks executed 0%
+    #####: 1368:re_node_set_contains (const re_node_set *set, Idx elem)
+        -: 1369:{
+        -: 1370:  __re_size_t idx, right, mid;
+    #####: 1371:  if (set->nelem <= 0)
+branch  0 never executed
+branch  1 never executed
+    #####: 1372:    return 0;
+        -: 1373:
+        -: 1374:  /* Binary search the element.  */
+    #####: 1375:  idx = 0;
+    #####: 1376:  right = set->nelem - 1;
+    #####: 1377:  while (idx < right)
+branch  0 never executed
+branch  1 never executed
+        -: 1378:    {
+    #####: 1379:      mid = (idx + right) / 2;
+    #####: 1380:      if (set->elems[mid] < elem)
+branch  0 never executed
+branch  1 never executed
+    #####: 1381:	idx = mid + 1;
+        -: 1382:      else
+    #####: 1383:	right = mid;
+        -: 1384:    }
+    #####: 1385:  return set->elems[idx] == elem ? idx + 1 : 0;
+branch  0 never executed
+branch  1 never executed
+        -: 1386:}
+        -: 1387:
+        -: 1388:static void
+function re_node_set_remove_at called 0 returned 0% blocks executed 0%
+    #####: 1389:re_node_set_remove_at (re_node_set *set, Idx idx)
+        -: 1390:{
+    #####: 1391:  if (idx < 0 || idx >= set->nelem)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1392:    return;
+    #####: 1393:  --set->nelem;
+    #####: 1394:  for (; idx < set->nelem; idx++)
+branch  0 never executed
+branch  1 never executed
+    #####: 1395:    set->elems[idx] = set->elems[idx + 1];
+        -: 1396:}
+        -: 1397:
+        -: 1398:
+        -: 1399:/* Add the token TOKEN to dfa->nodes, and return the index of the token.
+        -: 1400:   Or return -1 if an error occurred.  */
+        -: 1401:
+        -: 1402:static Idx
+function re_dfa_add_node called 0 returned 0% blocks executed 0%
+    #####: 1403:re_dfa_add_node (re_dfa_t *dfa, re_token_t token)
+        -: 1404:{
+    #####: 1405:  if (__glibc_unlikely (dfa->nodes_len >= dfa->nodes_alloc))
+branch  0 never executed
+branch  1 never executed
+        -: 1406:    {
+    #####: 1407:      size_t new_nodes_alloc = dfa->nodes_alloc * 2;
+        -: 1408:      Idx *new_nexts, *new_indices;
+        -: 1409:      re_node_set *new_edests, *new_eclosures;
+        -: 1410:      re_token_t *new_nodes;
+        -: 1411:
+        -: 1412:      /* Avoid overflows in realloc.  */
+    #####: 1413:      const size_t max_object_size = MAX (sizeof (re_token_t),
+        -: 1414:					  MAX (sizeof (re_node_set),
+        -: 1415:					       sizeof (Idx)));
+    #####: 1416:      if (__glibc_unlikely (MIN (IDX_MAX, SIZE_MAX / max_object_size)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -: 1417:			    < new_nodes_alloc))
+    #####: 1418:	return -1;
+        -: 1419:
+    #####: 1420:      new_nodes = re_realloc (dfa->nodes, re_token_t, new_nodes_alloc);
+    #####: 1421:      if (__glibc_unlikely (new_nodes == NULL))
+branch  0 never executed
+branch  1 never executed
+    #####: 1422:	return -1;
+    #####: 1423:      dfa->nodes = new_nodes;
+    #####: 1424:      new_nexts = re_realloc (dfa->nexts, Idx, new_nodes_alloc);
+    #####: 1425:      new_indices = re_realloc (dfa->org_indices, Idx, new_nodes_alloc);
+    #####: 1426:      new_edests = re_realloc (dfa->edests, re_node_set, new_nodes_alloc);
+    #####: 1427:      new_eclosures = re_realloc (dfa->eclosures, re_node_set, new_nodes_alloc);
+    #####: 1428:      if (__glibc_unlikely (new_nexts == NULL || new_indices == NULL
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+branch  7 never executed
+branch  8 never executed
+branch  9 never executed
+branch 10 never executed
+branch 11 never executed
+        -: 1429:			    || new_edests == NULL || new_eclosures == NULL))
+        -: 1430:	{
+    #####: 1431:	   re_free (new_nexts);
+    #####: 1432:	   re_free (new_indices);
+    #####: 1433:	   re_free (new_edests);
+    #####: 1434:	   re_free (new_eclosures);
+    #####: 1435:	   return -1;
+        -: 1436:	}
+    #####: 1437:      dfa->nexts = new_nexts;
+    #####: 1438:      dfa->org_indices = new_indices;
+    #####: 1439:      dfa->edests = new_edests;
+    #####: 1440:      dfa->eclosures = new_eclosures;
+    #####: 1441:      dfa->nodes_alloc = new_nodes_alloc;
+        -: 1442:    }
+    #####: 1443:  dfa->nodes[dfa->nodes_len] = token;
+    #####: 1444:  dfa->nodes[dfa->nodes_len].constraint = 0;
+        -: 1445:#ifdef RE_ENABLE_I18N
+    #####: 1446:  dfa->nodes[dfa->nodes_len].accept_mb =
+    #####: 1447:    ((token.type == OP_PERIOD && dfa->mb_cur_max > 1)
+branch  0 never executed
+branch  1 never executed
+    #####: 1448:     || token.type == COMPLEX_BRACKET);
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -: 1449:#endif
+    #####: 1450:  dfa->nexts[dfa->nodes_len] = -1;
+    #####: 1451:  re_node_set_init_empty (dfa->edests + dfa->nodes_len);
+    #####: 1452:  re_node_set_init_empty (dfa->eclosures + dfa->nodes_len);
+    #####: 1453:  return dfa->nodes_len++;
+        -: 1454:}
+        -: 1455:
+        -: 1456:static re_hashval_t
+function calc_state_hash called 0 returned 0% blocks executed 0%
+    #####: 1457:calc_state_hash (const re_node_set *nodes, unsigned int context)
+        -: 1458:{
+    #####: 1459:  re_hashval_t hash = nodes->nelem + context;
+        -: 1460:  Idx i;
+    #####: 1461:  for (i = 0 ; i < nodes->nelem ; i++)
+branch  0 never executed
+branch  1 never executed
+    #####: 1462:    hash += nodes->elems[i];
+    #####: 1463:  return hash;
+        -: 1464:}
+        -: 1465:
+        -: 1466:/* Search for the state whose node_set is equivalent to NODES.
+        -: 1467:   Return the pointer to the state, if we found it in the DFA.
+        -: 1468:   Otherwise create the new one and return it.  In case of an error
+        -: 1469:   return NULL and set the error code in ERR.
+        -: 1470:   Note: - We assume NULL as the invalid state, then it is possible that
+        -: 1471:	   return value is NULL and ERR is REG_NOERROR.
+        -: 1472:	 - We never return non-NULL value in case of any errors, it is for
+        -: 1473:	   optimization.  */
+        -: 1474:
+        -: 1475:static re_dfastate_t *
+        -: 1476:__attribute_warn_unused_result__
+function re_acquire_state called 0 returned 0% blocks executed 0%
+    #####: 1477:re_acquire_state (reg_errcode_t *err, const re_dfa_t *dfa,
+        -: 1478:		  const re_node_set *nodes)
+        -: 1479:{
+        -: 1480:  re_hashval_t hash;
+        -: 1481:  re_dfastate_t *new_state;
+        -: 1482:  struct re_state_table_entry *spot;
+        -: 1483:  Idx i;
+        -: 1484:#if defined GCC_LINT || defined lint
+        -: 1485:  /* Suppress bogus uninitialized-variable warnings.  */
+        -: 1486:  *err = REG_NOERROR;
+        -: 1487:#endif
+    #####: 1488:  if (__glibc_unlikely (nodes->nelem == 0))
+branch  0 never executed
+branch  1 never executed
+        -: 1489:    {
+    #####: 1490:      *err = REG_NOERROR;
+    #####: 1491:      return NULL;
+        -: 1492:    }
+    #####: 1493:  hash = calc_state_hash (nodes, 0);
+call    0 never executed
+    #####: 1494:  spot = dfa->state_table + (hash & dfa->state_hash_mask);
+        -: 1495:
+    #####: 1496:  for (i = 0 ; i < spot->num ; i++)
+branch  0 never executed
+branch  1 never executed
+        -: 1497:    {
+    #####: 1498:      re_dfastate_t *state = spot->array[i];
+    #####: 1499:      if (hash != state->hash)
+branch  0 never executed
+branch  1 never executed
+    #####: 1500:	continue;
+    #####: 1501:      if (re_node_set_compare (&state->nodes, nodes))
+branch  0 never executed
+branch  1 never executed
+    #####: 1502:	return state;
+        -: 1503:    }
+        -: 1504:
+        -: 1505:  /* There are no appropriate state in the dfa, create the new one.  */
+    #####: 1506:  new_state = create_ci_newstate (dfa, nodes, hash);
+call    0 never executed
+    #####: 1507:  if (__glibc_unlikely (new_state == NULL))
+branch  0 never executed
+branch  1 never executed
+    #####: 1508:    *err = REG_ESPACE;
+        -: 1509:
+    #####: 1510:  return new_state;
+        -: 1511:}
+        -: 1512:
+        -: 1513:/* Search for the state whose node_set is equivalent to NODES and
+        -: 1514:   whose context is equivalent to CONTEXT.
+        -: 1515:   Return the pointer to the state, if we found it in the DFA.
+        -: 1516:   Otherwise create the new one and return it.  In case of an error
+        -: 1517:   return NULL and set the error code in ERR.
+        -: 1518:   Note: - We assume NULL as the invalid state, then it is possible that
+        -: 1519:	   return value is NULL and ERR is REG_NOERROR.
+        -: 1520:	 - We never return non-NULL value in case of any errors, it is for
+        -: 1521:	   optimization.  */
+        -: 1522:
+        -: 1523:static re_dfastate_t *
+        -: 1524:__attribute_warn_unused_result__
+function re_acquire_state_context called 0 returned 0% blocks executed 0%
+    #####: 1525:re_acquire_state_context (reg_errcode_t *err, const re_dfa_t *dfa,
+        -: 1526:			  const re_node_set *nodes, unsigned int context)
+        -: 1527:{
+        -: 1528:  re_hashval_t hash;
+        -: 1529:  re_dfastate_t *new_state;
+        -: 1530:  struct re_state_table_entry *spot;
+        -: 1531:  Idx i;
+        -: 1532:#if defined GCC_LINT || defined lint
+        -: 1533:  /* Suppress bogus uninitialized-variable warnings.  */
+        -: 1534:  *err = REG_NOERROR;
+        -: 1535:#endif
+    #####: 1536:  if (nodes->nelem == 0)
+branch  0 never executed
+branch  1 never executed
+        -: 1537:    {
+    #####: 1538:      *err = REG_NOERROR;
+    #####: 1539:      return NULL;
+        -: 1540:    }
+    #####: 1541:  hash = calc_state_hash (nodes, context);
+call    0 never executed
+    #####: 1542:  spot = dfa->state_table + (hash & dfa->state_hash_mask);
+        -: 1543:
+    #####: 1544:  for (i = 0 ; i < spot->num ; i++)
+branch  0 never executed
+branch  1 never executed
+        -: 1545:    {
+    #####: 1546:      re_dfastate_t *state = spot->array[i];
+    #####: 1547:      if (state->hash == hash
+branch  0 never executed
+branch  1 never executed
+    #####: 1548:	  && state->context == context
+branch  0 never executed
+branch  1 never executed
+    #####: 1549:	  && re_node_set_compare (state->entrance_nodes, nodes))
+branch  0 never executed
+branch  1 never executed
+    #####: 1550:	return state;
+        -: 1551:    }
+        -: 1552:  /* There are no appropriate state in 'dfa', create the new one.  */
+    #####: 1553:  new_state = create_cd_newstate (dfa, nodes, context, hash);
+call    0 never executed
+    #####: 1554:  if (__glibc_unlikely (new_state == NULL))
+branch  0 never executed
+branch  1 never executed
+    #####: 1555:    *err = REG_ESPACE;
+        -: 1556:
+    #####: 1557:  return new_state;
+        -: 1558:}
+        -: 1559:
+        -: 1560:/* Finish initialization of the new state NEWSTATE, and using its hash value
+        -: 1561:   HASH put in the appropriate bucket of DFA's state table.  Return value
+        -: 1562:   indicates the error code if failed.  */
+        -: 1563:
+        -: 1564:static reg_errcode_t
+        -: 1565:__attribute_warn_unused_result__
+function register_state called 0 returned 0% blocks executed 0%
+    #####: 1566:register_state (const re_dfa_t *dfa, re_dfastate_t *newstate,
+        -: 1567:		re_hashval_t hash)
+        -: 1568:{
+        -: 1569:  struct re_state_table_entry *spot;
+        -: 1570:  reg_errcode_t err;
+        -: 1571:  Idx i;
+        -: 1572:
+    #####: 1573:  newstate->hash = hash;
+    #####: 1574:  err = re_node_set_alloc (&newstate->non_eps_nodes, newstate->nodes.nelem);
+call    0 never executed
+    #####: 1575:  if (__glibc_unlikely (err != REG_NOERROR))
+branch  0 never executed
+branch  1 never executed
+    #####: 1576:    return REG_ESPACE;
+    #####: 1577:  for (i = 0; i < newstate->nodes.nelem; i++)
+branch  0 never executed
+branch  1 never executed
+        -: 1578:    {
+    #####: 1579:      Idx elem = newstate->nodes.elems[i];
+    #####: 1580:      if (!IS_EPSILON_NODE (dfa->nodes[elem].type))
+branch  0 never executed
+branch  1 never executed
+    #####: 1581:	if (! re_node_set_insert_last (&newstate->non_eps_nodes, elem))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####: 1582:	  return REG_ESPACE;
+        -: 1583:    }
+        -: 1584:
+    #####: 1585:  spot = dfa->state_table + (hash & dfa->state_hash_mask);
+    #####: 1586:  if (__glibc_unlikely (spot->alloc <= spot->num))
+branch  0 never executed
+branch  1 never executed
+        -: 1587:    {
+    #####: 1588:      Idx new_alloc = 2 * spot->num + 2;
+    #####: 1589:      re_dfastate_t **new_array = re_realloc (spot->array, re_dfastate_t *,
+        -: 1590:					      new_alloc);
+    #####: 1591:      if (__glibc_unlikely (new_array == NULL))
+branch  0 never executed
+branch  1 never executed
+    #####: 1592:	return REG_ESPACE;
+    #####: 1593:      spot->array = new_array;
+    #####: 1594:      spot->alloc = new_alloc;
+        -: 1595:    }
+    #####: 1596:  spot->array[spot->num++] = newstate;
+    #####: 1597:  return REG_NOERROR;
+        -: 1598:}
+        -: 1599:
+        -: 1600:static void
+function free_state called 0 returned 0% blocks executed 0%
+    #####: 1601:free_state (re_dfastate_t *state)
+        -: 1602:{
+    #####: 1603:  re_node_set_free (&state->non_eps_nodes);
+    #####: 1604:  re_node_set_free (&state->inveclosure);
+    #####: 1605:  if (state->entrance_nodes != &state->nodes)
+branch  0 never executed
+branch  1 never executed
+        -: 1606:    {
+    #####: 1607:      re_node_set_free (state->entrance_nodes);
+    #####: 1608:      re_free (state->entrance_nodes);
+        -: 1609:    }
+    #####: 1610:  re_node_set_free (&state->nodes);
+    #####: 1611:  re_free (state->word_trtable);
+    #####: 1612:  re_free (state->trtable);
+    #####: 1613:  re_free (state);
+    #####: 1614:}
+        -: 1615:
+        -: 1616:/* Create the new state which is independent of contexts.
+        -: 1617:   Return the new state if succeeded, otherwise return NULL.  */
+        -: 1618:
+        -: 1619:static re_dfastate_t *
+        -: 1620:__attribute_warn_unused_result__
+function create_ci_newstate called 0 returned 0% blocks executed 0%
+    #####: 1621:create_ci_newstate (const re_dfa_t *dfa, const re_node_set *nodes,
+        -: 1622:		    re_hashval_t hash)
+        -: 1623:{
+        -: 1624:  Idx i;
+        -: 1625:  reg_errcode_t err;
+        -: 1626:  re_dfastate_t *newstate;
+        -: 1627:
+    #####: 1628:  newstate = (re_dfastate_t *) calloc (sizeof (re_dfastate_t), 1);
+    #####: 1629:  if (__glibc_unlikely (newstate == NULL))
+branch  0 never executed
+branch  1 never executed
+    #####: 1630:    return NULL;
+    #####: 1631:  err = re_node_set_init_copy (&newstate->nodes, nodes);
+call    0 never executed
+    #####: 1632:  if (__glibc_unlikely (err != REG_NOERROR))
+branch  0 never executed
+branch  1 never executed
+        -: 1633:    {
+    #####: 1634:      re_free (newstate);
+    #####: 1635:      return NULL;
+        -: 1636:    }
+        -: 1637:
+    #####: 1638:  newstate->entrance_nodes = &newstate->nodes;
+    #####: 1639:  for (i = 0 ; i < nodes->nelem ; i++)
+branch  0 never executed
+branch  1 never executed
+        -: 1640:    {
+    #####: 1641:      re_token_t *node = dfa->nodes + nodes->elems[i];
+    #####: 1642:      re_token_type_t type = node->type;
+    #####: 1643:      if (type == CHARACTER && !node->constraint)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1644:	continue;
+        -: 1645:#ifdef RE_ENABLE_I18N
+    #####: 1646:      newstate->accept_mb |= node->accept_mb;
+        -: 1647:#endif /* RE_ENABLE_I18N */
+        -: 1648:
+        -: 1649:      /* If the state has the halt node, the state is a halt state.  */
+    #####: 1650:      if (type == END_OF_RE)
+branch  0 never executed
+branch  1 never executed
+    #####: 1651:	newstate->halt = 1;
+    #####: 1652:      else if (type == OP_BACK_REF)
+branch  0 never executed
+branch  1 never executed
+    #####: 1653:	newstate->has_backref = 1;
+    #####: 1654:      else if (type == ANCHOR || node->constraint)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1655:	newstate->has_constraint = 1;
+        -: 1656:    }
+    #####: 1657:  err = register_state (dfa, newstate, hash);
+call    0 never executed
+    #####: 1658:  if (__glibc_unlikely (err != REG_NOERROR))
+branch  0 never executed
+branch  1 never executed
+        -: 1659:    {
+    #####: 1660:      free_state (newstate);
+call    0 never executed
+    #####: 1661:      newstate = NULL;
+        -: 1662:    }
+    #####: 1663:  return newstate;
+        -: 1664:}
+        -: 1665:
+        -: 1666:/* Create the new state which is depend on the context CONTEXT.
+        -: 1667:   Return the new state if succeeded, otherwise return NULL.  */
+        -: 1668:
+        -: 1669:static re_dfastate_t *
+        -: 1670:__attribute_warn_unused_result__
+function create_cd_newstate called 0 returned 0% blocks executed 0%
+    #####: 1671:create_cd_newstate (const re_dfa_t *dfa, const re_node_set *nodes,
+        -: 1672:		    unsigned int context, re_hashval_t hash)
+        -: 1673:{
+    #####: 1674:  Idx i, nctx_nodes = 0;
+        -: 1675:  reg_errcode_t err;
+        -: 1676:  re_dfastate_t *newstate;
+        -: 1677:
+    #####: 1678:  newstate = (re_dfastate_t *) calloc (sizeof (re_dfastate_t), 1);
+    #####: 1679:  if (__glibc_unlikely (newstate == NULL))
+branch  0 never executed
+branch  1 never executed
+    #####: 1680:    return NULL;
+    #####: 1681:  err = re_node_set_init_copy (&newstate->nodes, nodes);
+call    0 never executed
+    #####: 1682:  if (__glibc_unlikely (err != REG_NOERROR))
+branch  0 never executed
+branch  1 never executed
+        -: 1683:    {
+    #####: 1684:      re_free (newstate);
+    #####: 1685:      return NULL;
+        -: 1686:    }
+        -: 1687:
+    #####: 1688:  newstate->context = context;
+    #####: 1689:  newstate->entrance_nodes = &newstate->nodes;
+        -: 1690:
+    #####: 1691:  for (i = 0 ; i < nodes->nelem ; i++)
+branch  0 never executed
+branch  1 never executed
+        -: 1692:    {
+    #####: 1693:      re_token_t *node = dfa->nodes + nodes->elems[i];
+    #####: 1694:      re_token_type_t type = node->type;
+    #####: 1695:      unsigned int constraint = node->constraint;
+        -: 1696:
+    #####: 1697:      if (type == CHARACTER && !constraint)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1698:	continue;
+        -: 1699:#ifdef RE_ENABLE_I18N
+    #####: 1700:      newstate->accept_mb |= node->accept_mb;
+        -: 1701:#endif /* RE_ENABLE_I18N */
+        -: 1702:
+        -: 1703:      /* If the state has the halt node, the state is a halt state.  */
+    #####: 1704:      if (type == END_OF_RE)
+branch  0 never executed
+branch  1 never executed
+    #####: 1705:	newstate->halt = 1;
+    #####: 1706:      else if (type == OP_BACK_REF)
+branch  0 never executed
+branch  1 never executed
+    #####: 1707:	newstate->has_backref = 1;
+        -: 1708:
+    #####: 1709:      if (constraint)
+branch  0 never executed
+branch  1 never executed
+        -: 1710:	{
+    #####: 1711:	  if (newstate->entrance_nodes == &newstate->nodes)
+branch  0 never executed
+branch  1 never executed
+        -: 1712:	    {
+    #####: 1713:	      re_node_set *entrance_nodes = re_malloc (re_node_set, 1);
+    #####: 1714:	      if (__glibc_unlikely (entrance_nodes == NULL))
+branch  0 never executed
+branch  1 never executed
+        -: 1715:		{
+    #####: 1716:		  free_state (newstate);
+call    0 never executed
+    #####: 1717:		  return NULL;
+        -: 1718:		}
+    #####: 1719:	      newstate->entrance_nodes = entrance_nodes;
+    #####: 1720:	      if (re_node_set_init_copy (newstate->entrance_nodes, nodes)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+        -: 1721:		  != REG_NOERROR)
+        -: 1722:		{
+    #####: 1723:		  free_state (newstate);
+call    0 never executed
+    #####: 1724:		  return NULL;
+        -: 1725:		}
+    #####: 1726:	      nctx_nodes = 0;
+    #####: 1727:	      newstate->has_constraint = 1;
+        -: 1728:	    }
+        -: 1729:
+    #####: 1730:	  if (NOT_SATISFY_PREV_CONSTRAINT (constraint,context))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+branch  7 never executed
+branch  8 never executed
+branch  9 never executed
+branch 10 never executed
+branch 11 never executed
+branch 12 never executed
+branch 13 never executed
+branch 14 never executed
+branch 15 never executed
+        -: 1731:	    {
+    #####: 1732:	      re_node_set_remove_at (&newstate->nodes, i - nctx_nodes);
+call    0 never executed
+    #####: 1733:	      ++nctx_nodes;
+        -: 1734:	    }
+        -: 1735:	}
+        -: 1736:    }
+    #####: 1737:  err = register_state (dfa, newstate, hash);
+call    0 never executed
+    #####: 1738:  if (__glibc_unlikely (err != REG_NOERROR))
+branch  0 never executed
+branch  1 never executed
+        -: 1739:    {
+    #####: 1740:      free_state (newstate);
+call    0 never executed
+    #####: 1741:      newstate = NULL;
+        -: 1742:    }
+    #####: 1743:  return  newstate;
+        -: 1744:}

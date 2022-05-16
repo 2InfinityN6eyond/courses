@@ -1,0 +1,4268 @@
+        -:    0:Source:../../src/grep.c
+        -:    0:Programs:50
+        -:    1:/* grep.c - main driver file for grep.
+        -:    2:   Copyright (C) 1992, 1997-2002, 2004-2020 Free Software Foundation, Inc.
+        -:    3:
+        -:    4:   This program is free software; you can redistribute it and/or modify
+        -:    5:   it under the terms of the GNU General Public License as published by
+        -:    6:   the Free Software Foundation; either version 3, or (at your option)
+        -:    7:   any later version.
+        -:    8:
+        -:    9:   This program is distributed in the hope that it will be useful,
+        -:   10:   but WITHOUT ANY WARRANTY; without even the implied warranty of
+        -:   11:   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+        -:   12:   GNU General Public License for more details.
+        -:   13:
+        -:   14:   You should have received a copy of the GNU General Public License
+        -:   15:   along with this program; if not, write to the Free Software
+        -:   16:   Foundation, Inc., 51 Franklin Street - Fifth Floor, Boston, MA
+        -:   17:   02110-1301, USA.  */
+        -:   18:
+        -:   19:/* Written July 1992 by Mike Haertel.  */
+        -:   20:
+        -:   21:#include <config.h>
+        -:   22:#include <sys/types.h>
+        -:   23:#include <sys/stat.h>
+        -:   24:#include <wchar.h>
+        -:   25:#include <inttypes.h>
+        -:   26:#include <stdarg.h>
+        -:   27:#include <stdio.h>
+        -:   28:#include "system.h"
+        -:   29:
+        -:   30:#include "argmatch.h"
+        -:   31:#include "c-ctype.h"
+        -:   32:#include "c-stack.h"
+        -:   33:#include "closeout.h"
+        -:   34:#include "colorize.h"
+        -:   35:#include "die.h"
+        -:   36:#include "error.h"
+        -:   37:#include "exclude.h"
+        -:   38:#include "exitfail.h"
+        -:   39:#include "fcntl-safer.h"
+        -:   40:#include "fts_.h"
+        -:   41:#include "getopt.h"
+        -:   42:#include "getprogname.h"
+        -:   43:#include "grep.h"
+        -:   44:#include "intprops.h"
+        -:   45:#include "propername.h"
+        -:   46:#include "quote.h"
+        -:   47:#include "safe-read.h"
+        -:   48:#include "search.h"
+        -:   49:#include "c-strcase.h"
+        -:   50:#include "version-etc.h"
+        -:   51:#include "xalloc.h"
+        -:   52:#include "xbinary-io.h"
+        -:   53:#include "xstrtol.h"
+        -:   54:
+        -:   55:enum { SEP_CHAR_SELECTED = ':' };
+        -:   56:enum { SEP_CHAR_REJECTED = '-' };
+        -:   57:static char const SEP_STR_GROUP[] = "--";
+        -:   58:
+        -:   59:/* When stdout is connected to a regular file, save its stat
+        -:   60:   information here, so that we can automatically skip it, thus
+        -:   61:   avoiding a potential (racy) infinite loop.  */
+        -:   62:static struct stat out_stat;
+        -:   63:
+        -:   64:/* if non-zero, display usage information and exit */
+        -:   65:static int show_help;
+        -:   66:
+        -:   67:/* Print the version on standard output and exit.  */
+        -:   68:static bool show_version;
+        -:   69:
+        -:   70:/* Suppress diagnostics for nonexistent or unreadable files.  */
+        -:   71:static bool suppress_errors;
+        -:   72:
+        -:   73:/* If nonzero, use color markers.  */
+        -:   74:static int color_option;
+        -:   75:
+        -:   76:/* Show only the part of a line matching the expression. */
+        -:   77:static bool only_matching;
+        -:   78:
+        -:   79:/* If nonzero, make sure first content char in a line is on a tab stop. */
+        -:   80:static bool align_tabs;
+        -:   81:
+        -:   82:/* Print width of line numbers and byte offsets.  Nonzero if ALIGN_TABS.  */
+        -:   83:static int offset_width;
+        -:   84:
+        -:   85:/* See below */
+        -:   86:struct FL_pair
+        -:   87:  {
+        -:   88:    char const *filename;
+        -:   89:    size_t lineno;
+        -:   90:  };
+        -:   91:
+        -:   92:/* A list of lineno,filename pairs corresponding to -f FILENAME
+        -:   93:   arguments. Since we store the concatenation of all patterns in
+        -:   94:   a single array, KEYS, be they from the command line via "-e PAT"
+        -:   95:   or read from one or more -f-specified FILENAMES.  Given this
+        -:   96:   invocation, grep -f <(seq 5) -f <(seq 2) -f <(seq 3) FILE, there
+        -:   97:   will be three entries in LF_PAIR: {1, x} {6, y} {8, z}, where
+        -:   98:   x, y and z are just place-holders for shell-generated names.  */
+        -:   99:static struct FL_pair *fl_pair;
+        -:  100:static size_t n_fl_pair_slots;
+        -:  101:/* Count not only -f-specified files, but also individual -e operands
+        -:  102:   and any command-line argument that serves as a regular expression.  */
+        -:  103:static size_t n_pattern_files;
+        -:  104:
+        -:  105:/* The number of patterns seen so far.
+        -:  106:   It is advanced by fl_add and, when needed, used in pattern_file_name
+        -:  107:   to derive a file-relative line number.  */
+        -:  108:static size_t n_patterns;
+        -:  109:
+        -:  110:/* Return the number of newline bytes in BUF with size SIZE.  */
+        -:  111:static size_t _GL_ATTRIBUTE_PURE
+function count_nl_bytes called 1 returned 100% blocks executed 100%
+        1:  112:count_nl_bytes (char const *buf, size_t size)
+        -:  113:{
+        1:  114:  char const *p = buf;
+        1:  115:  char const *end_p = buf + size;
+        1:  116:  size_t n = 0;
+        3:  117:  while ((p = memchr (p, '\n', end_p - p)))
+branch  0 taken 50%
+branch  1 taken 50% (fallthrough)
+        1:  118:    p++, n++;
+        1:  119:  return n;
+        -:  120:}
+        -:  121:
+        -:  122:/* Append a FILENAME,line-number pair to FL_PAIR, and update
+        -:  123:   pattern-related counts from the contents of BUF with SIZE bytes.  */
+        -:  124:static void
+function fl_add called 1 returned 100% blocks executed 100%
+        1:  125:fl_add (char const *buf, size_t size, char const *filename)
+        -:  126:{
+        1:  127:  if (n_fl_pair_slots <= n_pattern_files)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        1:  128:    fl_pair = x2nrealloc (fl_pair, &n_fl_pair_slots, sizeof *fl_pair);
+call    0 returned 100%
+        -:  129:
+        1:  130:  fl_pair[n_pattern_files].lineno = n_patterns + 1;
+        1:  131:  fl_pair[n_pattern_files].filename = filename;
+        1:  132:  n_pattern_files++;
+        1:  133:  n_patterns += count_nl_bytes (buf, size);
+        1:  134:}
+        -:  135:
+        -:  136:/* Map the line number, LINENO, of one of the input patterns to the
+        -:  137:   name of the file from which it came.  If it was read from stdin
+        -:  138:   or if it was specified on the command line, return "-".  */
+        -:  139:char const * _GL_ATTRIBUTE_PURE
+function pattern_file_name called 0 returned 0% blocks executed 0%
+    #####:  140:pattern_file_name (size_t lineno, size_t *new_lineno)
+        -:  141:{
+        -:  142:  size_t i;
+    #####:  143:  for (i = 1; i < n_pattern_files; i++)
+branch  0 never executed
+branch  1 never executed
+        -:  144:    {
+    #####:  145:      if (lineno < fl_pair[i].lineno)
+branch  0 never executed
+branch  1 never executed
+    #####:  146:        break;
+        -:  147:    }
+        -:  148:
+    #####:  149:  *new_lineno = lineno - fl_pair[i - 1].lineno + 1;
+    #####:  150:  return fl_pair[i - 1].filename;
+        -:  151:}
+        -:  152:
+        -:  153:#if HAVE_ASAN
+        -:  154:/* Record the starting address and length of the sole poisoned region,
+        -:  155:   so that we can unpoison it later, just before each following read.  */
+        -:  156:static void const *poison_buf;
+        -:  157:static size_t poison_len;
+        -:  158:
+        -:  159:static void
+        -:  160:clear_asan_poison (void)
+        -:  161:{
+        -:  162:  if (poison_buf)
+        -:  163:    __asan_unpoison_memory_region (poison_buf, poison_len);
+        -:  164:}
+        -:  165:
+        -:  166:static void
+        -:  167:asan_poison (void const *addr, size_t size)
+        -:  168:{
+        -:  169:  poison_buf = addr;
+        -:  170:  poison_len = size;
+        -:  171:
+        -:  172:  __asan_poison_memory_region (poison_buf, poison_len);
+        -:  173:}
+        -:  174:#else
+function clear_asan_poison called 1 returned 100% blocks executed 100%
+        1:  175:static void clear_asan_poison (void) { }
+function asan_poison called 1 returned 100% blocks executed 100%
+        1:  176:static void asan_poison (void const volatile *addr, size_t size) { }
+        -:  177:#endif
+        -:  178:
+        -:  179:/* The group separator used when context is requested. */
+        -:  180:static const char *group_separator = SEP_STR_GROUP;
+        -:  181:
+        -:  182:/* The context and logic for choosing default --color screen attributes
+        -:  183:   (foreground and background colors, etc.) are the following.
+        -:  184:      -- There are eight basic colors available, each with its own
+        -:  185:         nominal luminosity to the human eye and foreground/background
+        -:  186:         codes (black [0 %, 30/40], blue [11 %, 34/44], red [30 %, 31/41],
+        -:  187:         magenta [41 %, 35/45], green [59 %, 32/42], cyan [70 %, 36/46],
+        -:  188:         yellow [89 %, 33/43], and white [100 %, 37/47]).
+        -:  189:      -- Sometimes, white as a background is actually implemented using
+        -:  190:         a shade of light gray, so that a foreground white can be visible
+        -:  191:         on top of it (but most often not).
+        -:  192:      -- Sometimes, black as a foreground is actually implemented using
+        -:  193:         a shade of dark gray, so that it can be visible on top of a
+        -:  194:         background black (but most often not).
+        -:  195:      -- Sometimes, more colors are available, as extensions.
+        -:  196:      -- Other attributes can be selected/deselected (bold [1/22],
+        -:  197:         underline [4/24], standout/inverse [7/27], blink [5/25], and
+        -:  198:         invisible/hidden [8/28]).  They are sometimes implemented by
+        -:  199:         using colors instead of what their names imply; e.g., bold is
+        -:  200:         often achieved by using brighter colors.  In practice, only bold
+        -:  201:         is really available to us, underline sometimes being mapped by
+        -:  202:         the terminal to some strange color choice, and standout best
+        -:  203:         being left for use by downstream programs such as less(1).
+        -:  204:      -- We cannot assume that any of the extensions or special features
+        -:  205:         are available for the purpose of choosing defaults for everyone.
+        -:  206:      -- The most prevalent default terminal backgrounds are pure black
+        -:  207:         and pure white, and are not necessarily the same shades of
+        -:  208:         those as if they were selected explicitly with SGR sequences.
+        -:  209:         Some terminals use dark or light pictures as default background,
+        -:  210:         but those are covered over by an explicit selection of background
+        -:  211:         color with an SGR sequence; their users will appreciate their
+        -:  212:         background pictures not be covered like this, if possible.
+        -:  213:      -- Some uses of colors attributes is to make some output items
+        -:  214:         more understated (e.g., context lines); this cannot be achieved
+        -:  215:         by changing the background color.
+        -:  216:      -- For these reasons, the grep color defaults should strive not
+        -:  217:         to change the background color from its default, unless it's
+        -:  218:         for a short item that should be highlighted, not understated.
+        -:  219:      -- The grep foreground color defaults (without an explicitly set
+        -:  220:         background) should provide enough contrast to be readable on any
+        -:  221:         terminal with either a black (dark) or white (light) background.
+        -:  222:         This only leaves red, magenta, green, and cyan (and their bold
+        -:  223:         counterparts) and possibly bold blue.  */
+        -:  224:/* The color strings used for matched text.
+        -:  225:   The user can overwrite them using the deprecated
+        -:  226:   environment variable GREP_COLOR or the new GREP_COLORS.  */
+        -:  227:static const char *selected_match_color = "01;31";	/* bold red */
+        -:  228:static const char *context_match_color  = "01;31";	/* bold red */
+        -:  229:
+        -:  230:/* Other colors.  Defaults look damn good.  */
+        -:  231:static const char *filename_color = "35";	/* magenta */
+        -:  232:static const char *line_num_color = "32";	/* green */
+        -:  233:static const char *byte_num_color = "32";	/* green */
+        -:  234:static const char *sep_color      = "36";	/* cyan */
+        -:  235:static const char *selected_line_color = "";	/* default color pair */
+        -:  236:static const char *context_line_color  = "";	/* default color pair */
+        -:  237:
+        -:  238:/* Select Graphic Rendition (SGR, "\33[...m") strings.  */
+        -:  239:/* Also Erase in Line (EL) to Right ("\33[K") by default.  */
+        -:  240:/*    Why have EL to Right after SGR?
+        -:  241:         -- The behavior of line-wrapping when at the bottom of the
+        -:  242:            terminal screen and at the end of the current line is often
+        -:  243:            such that a new line is introduced, entirely cleared with
+        -:  244:            the current background color which may be different from the
+        -:  245:            default one (see the boolean back_color_erase terminfo(5)
+        -:  246:            capability), thus scrolling the display by one line.
+        -:  247:            The end of this new line will stay in this background color
+        -:  248:            even after reverting to the default background color with
+        -:  249:            "\33[m', unless it is explicitly cleared again with "\33[K"
+        -:  250:            (which is the behavior the user would instinctively expect
+        -:  251:            from the whole thing).  There may be some unavoidable
+        -:  252:            background-color flicker at the end of this new line because
+        -:  253:            of this (when timing with the monitor's redraw is just right).
+        -:  254:         -- The behavior of HT (tab, "\t") is usually the same as that of
+        -:  255:            Cursor Forward Tabulation (CHT) with a default parameter
+        -:  256:            of 1 ("\33[I"), i.e., it performs pure movement to the next
+        -:  257:            tab stop, without any clearing of either content or screen
+        -:  258:            attributes (including background color); try
+        -:  259:               printf 'asdfqwerzxcv\rASDF\tZXCV\n'
+        -:  260:            in a bash(1) shell to demonstrate this.  This is not what the
+        -:  261:            user would instinctively expect of HT (but is ok for CHT).
+        -:  262:            The instinctive behavior would include clearing the terminal
+        -:  263:            cells that are skipped over by HT with blank cells in the
+        -:  264:            current screen attributes, including background color;
+        -:  265:            the boolean dest_tabs_magic_smso terminfo(5) capability
+        -:  266:            indicates this saner behavior for HT, but only some rare
+        -:  267:            terminals have it (although it also indicates a special
+        -:  268:            glitch with standout mode in the Teleray terminal for which
+        -:  269:            it was initially introduced).  The remedy is to add "\33K"
+        -:  270:            after each SGR sequence, be it START (to fix the behavior
+        -:  271:            of any HT after that before another SGR) or END (to fix the
+        -:  272:            behavior of an HT in default background color that would
+        -:  273:            follow a line-wrapping at the bottom of the screen in another
+        -:  274:            background color, and to complement doing it after START).
+        -:  275:            Piping grep's output through a pager such as less(1) avoids
+        -:  276:            any HT problems since the pager performs tab expansion.
+        -:  277:
+        -:  278:      Generic disadvantages of this remedy are:
+        -:  279:         -- Some very rare terminals might support SGR but not EL (nobody
+        -:  280:            will use "grep --color" on a terminal that does not support
+        -:  281:            SGR in the first place).
+        -:  282:         -- Having these extra control sequences might somewhat complicate
+        -:  283:            the task of any program trying to parse "grep --color"
+        -:  284:            output in order to extract structuring information from it.
+        -:  285:      A specific disadvantage to doing it after SGR START is:
+        -:  286:         -- Even more possible background color flicker (when timing
+        -:  287:            with the monitor's redraw is just right), even when not at the
+        -:  288:            bottom of the screen.
+        -:  289:      There are no additional disadvantages specific to doing it after
+        -:  290:      SGR END.
+        -:  291:
+        -:  292:      It would be impractical for GNU grep to become a full-fledged
+        -:  293:      terminal program linked against ncurses or the like, so it will
+        -:  294:      not detect terminfo(5) capabilities.  */
+        -:  295:static const char *sgr_start = "\33[%sm\33[K";
+        -:  296:static const char *sgr_end   = "\33[m\33[K";
+        -:  297:
+        -:  298:/* SGR utility functions.  */
+        -:  299:static void
+function pr_sgr_start called 0 returned 0% blocks executed 0%
+    #####:  300:pr_sgr_start (char const *s)
+        -:  301:{
+    #####:  302:  if (*s)
+branch  0 never executed
+branch  1 never executed
+    #####:  303:    print_start_colorize (sgr_start, s);
+call    0 never executed
+    #####:  304:}
+        -:  305:static void
+function pr_sgr_end called 0 returned 0% blocks executed 0%
+    #####:  306:pr_sgr_end (char const *s)
+        -:  307:{
+    #####:  308:  if (*s)
+branch  0 never executed
+branch  1 never executed
+    #####:  309:    print_end_colorize (sgr_end);
+call    0 never executed
+    #####:  310:}
+        -:  311:static void
+function pr_sgr_start_if called 0 returned 0% blocks executed 0%
+    #####:  312:pr_sgr_start_if (char const *s)
+        -:  313:{
+    #####:  314:  if (color_option)
+branch  0 never executed
+branch  1 never executed
+    #####:  315:    pr_sgr_start (s);
+call    0 never executed
+    #####:  316:}
+        -:  317:static void
+function pr_sgr_end_if called 0 returned 0% blocks executed 0%
+    #####:  318:pr_sgr_end_if (char const *s)
+        -:  319:{
+    #####:  320:  if (color_option)
+branch  0 never executed
+branch  1 never executed
+    #####:  321:    pr_sgr_end (s);
+call    0 never executed
+    #####:  322:}
+        -:  323:
+        -:  324:struct color_cap
+        -:  325:  {
+        -:  326:    const char *name;
+        -:  327:    const char **var;
+        -:  328:    void (*fct) (void);
+        -:  329:  };
+        -:  330:
+        -:  331:static void
+function color_cap_mt_fct called 0 returned 0% blocks executed 0%
+    #####:  332:color_cap_mt_fct (void)
+        -:  333:{
+        -:  334:  /* Our caller just set selected_match_color.  */
+    #####:  335:  context_match_color = selected_match_color;
+    #####:  336:}
+        -:  337:
+        -:  338:static void
+function color_cap_rv_fct called 0 returned 0% blocks executed 0%
+    #####:  339:color_cap_rv_fct (void)
+        -:  340:{
+        -:  341:  /* By this point, it was 1 (or already -1).  */
+    #####:  342:  color_option = -1;  /* That's still != 0.  */
+    #####:  343:}
+        -:  344:
+        -:  345:static void
+function color_cap_ne_fct called 0 returned 0% blocks executed 0%
+    #####:  346:color_cap_ne_fct (void)
+        -:  347:{
+    #####:  348:  sgr_start = "\33[%sm";
+    #####:  349:  sgr_end   = "\33[m";
+    #####:  350:}
+        -:  351:
+        -:  352:/* For GREP_COLORS.  */
+        -:  353:static const struct color_cap color_dict[] =
+        -:  354:  {
+        -:  355:    { "mt", &selected_match_color, color_cap_mt_fct }, /* both ms/mc */
+        -:  356:    { "ms", &selected_match_color, NULL }, /* selected matched text */
+        -:  357:    { "mc", &context_match_color,  NULL }, /* context matched text */
+        -:  358:    { "fn", &filename_color,       NULL }, /* filename */
+        -:  359:    { "ln", &line_num_color,       NULL }, /* line number */
+        -:  360:    { "bn", &byte_num_color,       NULL }, /* byte (sic) offset */
+        -:  361:    { "se", &sep_color,            NULL }, /* separator */
+        -:  362:    { "sl", &selected_line_color,  NULL }, /* selected lines */
+        -:  363:    { "cx", &context_line_color,   NULL }, /* context lines */
+        -:  364:    { "rv", NULL,                  color_cap_rv_fct }, /* -v reverses sl/cx */
+        -:  365:    { "ne", NULL,                  color_cap_ne_fct }, /* no EL on SGR_* */
+        -:  366:    { NULL, NULL,                  NULL }
+        -:  367:  };
+        -:  368:
+        -:  369:/* Saved errno value from failed output functions on stdout.  */
+        -:  370:static int stdout_errno;
+        -:  371:
+        -:  372:static void
+function putchar_errno called 0 returned 0% blocks executed 0%
+    #####:  373:putchar_errno (int c)
+        -:  374:{
+    #####:  375:  if (putchar (c) < 0)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####:  376:    stdout_errno = errno;
+    #####:  377:}
+        -:  378:
+        -:  379:static void
+function fputs_errno called 0 returned 0% blocks executed 0%
+    #####:  380:fputs_errno (char const *s)
+        -:  381:{
+    #####:  382:  if (fputs (s, stdout) < 0)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####:  383:    stdout_errno = errno;
+    #####:  384:}
+        -:  385:
+        -:  386:static void _GL_ATTRIBUTE_FORMAT_PRINTF (1, 2)
+function printf_errno called 1 returned 100% blocks executed 75%
+        1:  387:printf_errno (char const *format, ...)
+        -:  388:{
+        -:  389:  va_list ap;
+        1:  390:  va_start (ap, format);
+        1:  391:  if (vfprintf (stdout, format, ap) < 0)
+call    0 returned 100%
+branch  1 taken 0% (fallthrough)
+branch  2 taken 100%
+    #####:  392:    stdout_errno = errno;
+        1:  393:  va_end (ap);
+        1:  394:}
+        -:  395:
+        -:  396:static void
+function fwrite_errno called 0 returned 0% blocks executed 0%
+    #####:  397:fwrite_errno (void const *ptr, size_t size, size_t nmemb)
+        -:  398:{
+    #####:  399:  if (fwrite (ptr, size, nmemb, stdout) != nmemb)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####:  400:    stdout_errno = errno;
+    #####:  401:}
+        -:  402:
+        -:  403:static void
+function fflush_errno called 0 returned 0% blocks executed 0%
+    #####:  404:fflush_errno (void)
+        -:  405:{
+    #####:  406:  if (fflush (stdout) != 0)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####:  407:    stdout_errno = errno;
+    #####:  408:}
+        -:  409:
+        -:  410:static struct exclude *excluded_patterns[2];
+        -:  411:static struct exclude *excluded_directory_patterns[2];
+        -:  412:/* Short options.  */
+        -:  413:static char const short_options[] =
+        -:  414:"0123456789A:B:C:D:EFGHIPTUVX:abcd:e:f:hiLlm:noqRrsuvwxyZz";
+        -:  415:
+        -:  416:/* Non-boolean long options that have no corresponding short equivalents.  */
+        -:  417:enum
+        -:  418:{
+        -:  419:  BINARY_FILES_OPTION = CHAR_MAX + 1,
+        -:  420:  COLOR_OPTION,
+        -:  421:  EXCLUDE_DIRECTORY_OPTION,
+        -:  422:  EXCLUDE_OPTION,
+        -:  423:  EXCLUDE_FROM_OPTION,
+        -:  424:  GROUP_SEPARATOR_OPTION,
+        -:  425:  INCLUDE_OPTION,
+        -:  426:  LINE_BUFFERED_OPTION,
+        -:  427:  LABEL_OPTION,
+        -:  428:  NO_IGNORE_CASE_OPTION
+        -:  429:};
+        -:  430:
+        -:  431:/* Long options equivalences. */
+        -:  432:static struct option const long_options[] =
+        -:  433:{
+        -:  434:  {"basic-regexp",    no_argument, NULL, 'G'},
+        -:  435:  {"extended-regexp", no_argument, NULL, 'E'},
+        -:  436:  {"fixed-regexp",    no_argument, NULL, 'F'},
+        -:  437:  {"fixed-strings",   no_argument, NULL, 'F'},
+        -:  438:  {"perl-regexp",     no_argument, NULL, 'P'},
+        -:  439:  {"after-context", required_argument, NULL, 'A'},
+        -:  440:  {"before-context", required_argument, NULL, 'B'},
+        -:  441:  {"binary-files", required_argument, NULL, BINARY_FILES_OPTION},
+        -:  442:  {"byte-offset", no_argument, NULL, 'b'},
+        -:  443:  {"context", required_argument, NULL, 'C'},
+        -:  444:  {"color", optional_argument, NULL, COLOR_OPTION},
+        -:  445:  {"colour", optional_argument, NULL, COLOR_OPTION},
+        -:  446:  {"count", no_argument, NULL, 'c'},
+        -:  447:  {"devices", required_argument, NULL, 'D'},
+        -:  448:  {"directories", required_argument, NULL, 'd'},
+        -:  449:  {"exclude", required_argument, NULL, EXCLUDE_OPTION},
+        -:  450:  {"exclude-from", required_argument, NULL, EXCLUDE_FROM_OPTION},
+        -:  451:  {"exclude-dir", required_argument, NULL, EXCLUDE_DIRECTORY_OPTION},
+        -:  452:  {"file", required_argument, NULL, 'f'},
+        -:  453:  {"files-with-matches", no_argument, NULL, 'l'},
+        -:  454:  {"files-without-match", no_argument, NULL, 'L'},
+        -:  455:  {"group-separator", required_argument, NULL, GROUP_SEPARATOR_OPTION},
+        -:  456:  {"help", no_argument, &show_help, 1},
+        -:  457:  {"include", required_argument, NULL, INCLUDE_OPTION},
+        -:  458:  {"ignore-case", no_argument, NULL, 'i'},
+        -:  459:  {"no-ignore-case", no_argument, NULL, NO_IGNORE_CASE_OPTION},
+        -:  460:  {"initial-tab", no_argument, NULL, 'T'},
+        -:  461:  {"label", required_argument, NULL, LABEL_OPTION},
+        -:  462:  {"line-buffered", no_argument, NULL, LINE_BUFFERED_OPTION},
+        -:  463:  {"line-number", no_argument, NULL, 'n'},
+        -:  464:  {"line-regexp", no_argument, NULL, 'x'},
+        -:  465:  {"max-count", required_argument, NULL, 'm'},
+        -:  466:
+        -:  467:  {"no-filename", no_argument, NULL, 'h'},
+        -:  468:  {"no-group-separator", no_argument, NULL, GROUP_SEPARATOR_OPTION},
+        -:  469:  {"no-messages", no_argument, NULL, 's'},
+        -:  470:  {"null", no_argument, NULL, 'Z'},
+        -:  471:  {"null-data", no_argument, NULL, 'z'},
+        -:  472:  {"only-matching", no_argument, NULL, 'o'},
+        -:  473:  {"quiet", no_argument, NULL, 'q'},
+        -:  474:  {"recursive", no_argument, NULL, 'r'},
+        -:  475:  {"dereference-recursive", no_argument, NULL, 'R'},
+        -:  476:  {"regexp", required_argument, NULL, 'e'},
+        -:  477:  {"invert-match", no_argument, NULL, 'v'},
+        -:  478:  {"silent", no_argument, NULL, 'q'},
+        -:  479:  {"text", no_argument, NULL, 'a'},
+        -:  480:  {"binary", no_argument, NULL, 'U'},
+        -:  481:  {"unix-byte-offsets", no_argument, NULL, 'u'},
+        -:  482:  {"version", no_argument, NULL, 'V'},
+        -:  483:  {"with-filename", no_argument, NULL, 'H'},
+        -:  484:  {"word-regexp", no_argument, NULL, 'w'},
+        -:  485:  {0, 0, 0, 0}
+        -:  486:};
+        -:  487:
+        -:  488:/* Define flags declared in grep.h. */
+        -:  489:bool match_icase;
+        -:  490:bool match_words;
+        -:  491:bool match_lines;
+        -:  492:char eolbyte;
+        -:  493:
+        -:  494:/* For error messages. */
+        -:  495:/* The input file name, or (if standard input) null or a --label argument.  */
+        -:  496:static char const *filename;
+        -:  497:/* Omit leading "./" from file names in diagnostics.  */
+        -:  498:static bool omit_dot_slash;
+        -:  499:static bool errseen;
+        -:  500:
+        -:  501:/* True if output from the current input file has been suppressed
+        -:  502:   because an output line had an encoding error.  */
+        -:  503:static bool encoding_error_output;
+        -:  504:
+        -:  505:enum directories_type
+        -:  506:  {
+        -:  507:    READ_DIRECTORIES = 2,
+        -:  508:    RECURSE_DIRECTORIES,
+        -:  509:    SKIP_DIRECTORIES
+        -:  510:  };
+        -:  511:
+        -:  512:/* How to handle directories.  */
+        -:  513:static char const *const directories_args[] =
+        -:  514:{
+        -:  515:  "read", "recurse", "skip", NULL
+        -:  516:};
+        -:  517:static enum directories_type const directories_types[] =
+        -:  518:{
+        -:  519:  READ_DIRECTORIES, RECURSE_DIRECTORIES, SKIP_DIRECTORIES
+        -:  520:};
+        -:  521:ARGMATCH_VERIFY (directories_args, directories_types);
+        -:  522:
+        -:  523:static enum directories_type directories = READ_DIRECTORIES;
+        -:  524:
+        -:  525:enum { basic_fts_options = FTS_CWDFD | FTS_NOSTAT | FTS_TIGHT_CYCLE_CHECK };
+        -:  526:static int fts_options = basic_fts_options | FTS_COMFOLLOW | FTS_PHYSICAL;
+        -:  527:
+        -:  528:/* How to handle devices. */
+        -:  529:static enum
+        -:  530:  {
+        -:  531:    READ_COMMAND_LINE_DEVICES,
+        -:  532:    READ_DEVICES,
+        -:  533:    SKIP_DEVICES
+        -:  534:  } devices = READ_COMMAND_LINE_DEVICES;
+        -:  535:
+        -:  536:static bool grepfile (int, char const *, bool, bool);
+        -:  537:static bool grepdesc (int, bool);
+        -:  538:
+        -:  539:static bool
+function is_device_mode called 0 returned 0% blocks executed 0%
+    #####:  540:is_device_mode (mode_t m)
+        -:  541:{
+    #####:  542:  return S_ISCHR (m) || S_ISBLK (m) || S_ISSOCK (m) || S_ISFIFO (m);
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+branch  7 never executed
+        -:  543:}
+        -:  544:
+        -:  545:static bool
+function skip_devices called 0 returned 0% blocks executed 0%
+    #####:  546:skip_devices (bool command_line)
+        -:  547:{
+    #####:  548:  return (devices == SKIP_DEVICES
+    #####:  549:          || ((devices == READ_COMMAND_LINE_DEVICES) & !command_line));
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  550:}
+        -:  551:
+        -:  552:/* Return if ST->st_size is defined.  Assume the file is not a
+        -:  553:   symbolic link.  */
+        -:  554:static bool
+function usable_st_size called 0 returned 0% blocks executed 0%
+    #####:  555:usable_st_size (struct stat const *st)
+        -:  556:{
+    #####:  557:  return S_ISREG (st->st_mode) || S_TYPEISSHM (st) || S_TYPEISTMO (st);
+        -:  558:}
+        -:  559:
+        -:  560:/* Lame substitutes for SEEK_DATA and SEEK_HOLE on platforms lacking them.
+        -:  561:   Do not rely on these finding data or holes if they equal SEEK_SET.  */
+        -:  562:#ifndef SEEK_DATA
+        -:  563:enum { SEEK_DATA = SEEK_SET };
+        -:  564:#endif
+        -:  565:#ifndef SEEK_HOLE
+        -:  566:enum { SEEK_HOLE = SEEK_SET };
+        -:  567:#endif
+        -:  568:
+        -:  569:/* True if lseek with SEEK_CUR or SEEK_DATA failed on the current input.  */
+        -:  570:static bool seek_failed;
+        -:  571:static bool seek_data_failed;
+        -:  572:
+        -:  573:/* Functions we'll use to search. */
+        -:  574:typedef void *(*compile_fp_t) (char *, size_t, reg_syntax_t);
+        -:  575:typedef size_t (*execute_fp_t) (void *, char const *, size_t, size_t *,
+        -:  576:                                char const *);
+        -:  577:static execute_fp_t execute;
+        -:  578:static void *compiled_pattern;
+        -:  579:
+        -:  580:static char const *
+function input_filename called 1 returned 100% blocks executed 100%
+        1:  581:input_filename (void)
+        -:  582:{
+        1:  583:  if (!filename)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        1:  584:    filename = _("(standard input)");
+        1:  585:  return filename;
+        -:  586:}
+        -:  587:
+        -:  588:/* Unless requested, diagnose an error about the input file.  */
+        -:  589:static void
+function suppressible_error called 0 returned 0% blocks executed 0%
+    #####:  590:suppressible_error (int errnum)
+        -:  591:{
+    #####:  592:  if (! suppress_errors)
+branch  0 never executed
+branch  1 never executed
+    #####:  593:    error (0, errnum, "%s", input_filename ());
+call    0 never executed
+call    1 never executed
+    #####:  594:  errseen = true;
+    #####:  595:}
+        -:  596:
+        -:  597:/* If there has already been a write error, don't bother closing
+        -:  598:   standard output, as that might elicit a duplicate diagnostic.  */
+        -:  599:static void
+function clean_up_stdout called 1 returned 100% blocks executed 100%
+        1:  600:clean_up_stdout (void)
+        -:  601:{
+        1:  602:  if (! stdout_errno)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        1:  603:    close_stdout ();
+call    0 returned 100%
+        1:  604:}
+        -:  605:
+        -:  606:/* A cast to TYPE of VAL.  Use this when TYPE is a pointer type, VAL
+        -:  607:   is properly aligned for TYPE, and 'gcc -Wcast-align' cannot infer
+        -:  608:   the alignment and would otherwise complain about the cast.  */
+        -:  609:#if 4 < __GNUC__ + (6 <= __GNUC_MINOR__)
+        -:  610:# define CAST_ALIGNED(type, val)                           \
+        -:  611:    ({ __typeof__ (val) val_ = val;                        \
+        -:  612:       _Pragma ("GCC diagnostic push")                     \
+        -:  613:       _Pragma ("GCC diagnostic ignored \"-Wcast-align\"") \
+        -:  614:       (type) val_;                                        \
+        -:  615:       _Pragma ("GCC diagnostic pop")                      \
+        -:  616:    })
+        -:  617:#else
+        -:  618:# define CAST_ALIGNED(type, val) ((type) (val))
+        -:  619:#endif
+        -:  620:
+        -:  621:/* An unsigned type suitable for fast matching.  */
+        -:  622:typedef uintmax_t uword;
+        -:  623:
+        -:  624:struct localeinfo localeinfo;
+        -:  625:
+        -:  626:/* A mask to test for unibyte characters, with the pattern repeated to
+        -:  627:   fill a uword.  For a multibyte character encoding where
+        -:  628:   all bytes are unibyte characters, this is 0.  For UTF-8, this is
+        -:  629:   0x808080....  For encodings where unibyte characters have no discerned
+        -:  630:   pattern, this is all 1s.  The unsigned char C is a unibyte
+        -:  631:   character if C & UNIBYTE_MASK is zero.  If the uword W is the
+        -:  632:   concatenation of bytes, the bytes are all unibyte characters
+        -:  633:   if W & UNIBYTE_MASK is zero.  */
+        -:  634:static uword unibyte_mask;
+        -:  635:
+        -:  636:static void
+function initialize_unibyte_mask called 1 returned 100% blocks executed 100%
+        1:  637:initialize_unibyte_mask (void)
+        -:  638:{
+        -:  639:  /* For each encoding error I that MASK does not already match,
+        -:  640:     accumulate I's most significant 1 bit by ORing it into MASK.
+        -:  641:     Although any 1 bit of I could be used, in practice high-order
+        -:  642:     bits work better.  */
+        1:  643:  unsigned char mask = 0;
+        1:  644:  int ms1b = 1;
+      256:  645:  for (int i = 1; i <= UCHAR_MAX; i++)
+branch  0 taken 99%
+branch  1 taken 1% (fallthrough)
+      255:  646:    if ((localeinfo.sbclen[i] != 1) & ! (mask & i))
+branch  0 taken 1% (fallthrough)
+branch  1 taken 99%
+        -:  647:      {
+        9:  648:        while (ms1b * 2 <= i)
+branch  0 taken 88%
+branch  1 taken 13% (fallthrough)
+        7:  649:          ms1b *= 2;
+        1:  650:        mask |= ms1b;
+        -:  651:      }
+        -:  652:
+        -:  653:  /* Now MASK will detect any encoding-error byte, although it may
+        -:  654:     cry wolf and it may not be optimal.  Build a uword-length mask by
+        -:  655:     repeating MASK.  */
+        1:  656:  uword uword_max = -1;
+        1:  657:  unibyte_mask = uword_max / UCHAR_MAX * mask;
+        1:  658:}
+        -:  659:
+        -:  660:/* Skip the easy bytes in a buffer that is guaranteed to have a sentinel
+        -:  661:   that is not easy, and return a pointer to the first non-easy byte.
+        -:  662:   The easy bytes all have UNIBYTE_MASK off.  */
+        -:  663:static char const * _GL_ATTRIBUTE_PURE
+function skip_easy_bytes called 0 returned 0% blocks executed 0%
+    #####:  664:skip_easy_bytes (char const *buf)
+        -:  665:{
+        -:  666:  /* Search a byte at a time until the pointer is aligned, then a
+        -:  667:     uword at a time until a match is found, then a byte at a time to
+        -:  668:     identify the exact byte.  The uword search may go slightly past
+        -:  669:     the buffer end, but that's benign.  */
+        -:  670:  char const *p;
+        -:  671:  uword const *s;
+    #####:  672:  for (p = buf; (uintptr_t) p % sizeof (uword) != 0; p++)
+branch  0 never executed
+branch  1 never executed
+    #####:  673:    if (to_uchar (*p) & unibyte_mask)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####:  674:      return p;
+    #####:  675:  for (s = CAST_ALIGNED (uword const *, p); ! (*s & unibyte_mask); s++)
+branch  0 never executed
+branch  1 never executed
+    #####:  676:    continue;
+    #####:  677:  for (p = (char const *) s; ! (to_uchar (*p) & unibyte_mask); p++)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####:  678:    continue;
+    #####:  679:  return p;
+        -:  680:}
+        -:  681:
+        -:  682:/* Return true if BUF, of size SIZE, has an encoding error.
+        -:  683:   BUF must be followed by at least sizeof (uword) bytes,
+        -:  684:   the first of which may be modified.  */
+        -:  685:static bool
+function buf_has_encoding_errors called 0 returned 0% blocks executed 0%
+    #####:  686:buf_has_encoding_errors (char *buf, size_t size)
+        -:  687:{
+    #####:  688:  if (! unibyte_mask)
+branch  0 never executed
+branch  1 never executed
+    #####:  689:    return false;
+        -:  690:
+    #####:  691:  mbstate_t mbs = { 0 };
+        -:  692:  size_t clen;
+        -:  693:
+    #####:  694:  buf[size] = -1;
+    #####:  695:  for (char const *p = buf; (p = skip_easy_bytes (p)) < buf + size; p += clen)
+branch  0 never executed
+branch  1 never executed
+        -:  696:    {
+    #####:  697:      clen = mbrlen (p, buf + size - p, &mbs);
+call    0 never executed
+    #####:  698:      if ((size_t) -2 <= clen)
+branch  0 never executed
+branch  1 never executed
+    #####:  699:        return true;
+        -:  700:    }
+        -:  701:
+    #####:  702:  return false;
+        -:  703:}
+        -:  704:
+        -:  705:
+        -:  706:/* Return true if BUF, of size SIZE, has a null byte.
+        -:  707:   BUF must be followed by at least one byte,
+        -:  708:   which may be arbitrarily written to or read from.  */
+        -:  709:static bool
+function buf_has_nulls called 1 returned 100% blocks executed 100%
+        1:  710:buf_has_nulls (char *buf, size_t size)
+        -:  711:{
+        1:  712:  buf[size] = 0;
+        1:  713:  return strlen (buf) != size;
+        -:  714:}
+        -:  715:
+        -:  716:/* Return true if a file is known to contain null bytes.
+        -:  717:   SIZE bytes have already been read from the file
+        -:  718:   with descriptor FD and status ST.  */
+        -:  719:static bool
+function file_must_have_nulls called 0 returned 0% blocks executed 0%
+    #####:  720:file_must_have_nulls (size_t size, int fd, struct stat const *st)
+        -:  721:{
+        -:  722:  /* If the file has holes, it must contain a null byte somewhere.  */
+    #####:  723:  if (SEEK_HOLE != SEEK_SET && !seek_failed
+branch  0 never executed
+branch  1 never executed
+    #####:  724:      && usable_st_size (st) && size < st->st_size)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+        -:  725:    {
+    #####:  726:      off_t cur = size;
+    #####:  727:      if (O_BINARY || fd == STDIN_FILENO)
+branch  0 never executed
+branch  1 never executed
+        -:  728:        {
+    #####:  729:          cur = lseek (fd, 0, SEEK_CUR);
+call    0 never executed
+    #####:  730:          if (cur < 0)
+branch  0 never executed
+branch  1 never executed
+    #####:  731:            return false;
+        -:  732:        }
+        -:  733:
+        -:  734:      /* Look for a hole after the current location.  */
+    #####:  735:      off_t hole_start = lseek (fd, cur, SEEK_HOLE);
+call    0 never executed
+    #####:  736:      if (0 <= hole_start)
+branch  0 never executed
+branch  1 never executed
+        -:  737:        {
+    #####:  738:          if (lseek (fd, cur, SEEK_SET) < 0)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####:  739:            suppressible_error (errno);
+call    0 never executed
+    #####:  740:          if (hole_start < st->st_size)
+branch  0 never executed
+branch  1 never executed
+    #####:  741:            return true;
+        -:  742:        }
+        -:  743:    }
+        -:  744:
+    #####:  745:  return false;
+        -:  746:}
+        -:  747:
+        -:  748:/* Convert STR to a nonnegative integer, storing the result in *OUT.
+        -:  749:   STR must be a valid context length argument; report an error if it
+        -:  750:   isn't.  Silently ceiling *OUT at the maximum value, as that is
+        -:  751:   practically equivalent to infinity for grep's purposes.  */
+        -:  752:static void
+function context_length_arg called 0 returned 0% blocks executed 0%
+    #####:  753:context_length_arg (char const *str, intmax_t *out)
+        -:  754:{
+    #####:  755:  switch (xstrtoimax (str, 0, 10, out, ""))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+        -:  756:    {
+    #####:  757:    case LONGINT_OK:
+        -:  758:    case LONGINT_OVERFLOW:
+    #####:  759:      if (0 <= *out)
+branch  0 never executed
+branch  1 never executed
+    #####:  760:        break;
+        -:  761:      FALLTHROUGH;
+        -:  762:    default:
+    #####:  763:      die (EXIT_TROUBLE, 0, "%s: %s", str,
+call    0 never executed
+call    1 never executed
+        -:  764:           _("invalid context length argument"));
+        -:  765:    }
+    #####:  766:}
+        -:  767:
+        -:  768:/* Return the add_exclude options suitable for excluding a file name.
+        -:  769:   If COMMAND_LINE, it is a command-line file name.  */
+        -:  770:static int
+function exclude_options called 0 returned 0% blocks executed 0%
+    #####:  771:exclude_options (bool command_line)
+        -:  772:{
+    #####:  773:  return EXCLUDE_WILDCARDS | (command_line ? 0 : EXCLUDE_ANCHORED);
+branch  0 never executed
+branch  1 never executed
+        -:  774:}
+        -:  775:
+        -:  776:/* Return true if the file with NAME should be skipped.
+        -:  777:   If COMMAND_LINE, it is a command-line argument.
+        -:  778:   If IS_DIR, it is a directory.  */
+        -:  779:static bool
+function skipped_file called 0 returned 0% blocks executed 0%
+    #####:  780:skipped_file (char const *name, bool command_line, bool is_dir)
+        -:  781:{
+        -:  782:  struct exclude **pats;
+    #####:  783:  if (! is_dir)
+branch  0 never executed
+branch  1 never executed
+    #####:  784:    pats = excluded_patterns;
+    #####:  785:  else if (directories == SKIP_DIRECTORIES)
+branch  0 never executed
+branch  1 never executed
+    #####:  786:    return true;
+    #####:  787:  else if (command_line && omit_dot_slash)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  788:    return false;
+        -:  789:  else
+    #####:  790:    pats = excluded_directory_patterns;
+    #####:  791:  return pats[command_line] && excluded_file_name (pats[command_line], name);
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+branch  3 never executed
+branch  4 never executed
+        -:  792:}
+        -:  793:
+        -:  794:/* Hairy buffering mechanism for grep.  The intent is to keep
+        -:  795:   all reads aligned on a page boundary and multiples of the
+        -:  796:   page size, unless a read yields a partial page.  */
+        -:  797:
+        -:  798:static char *buffer;		/* Base of buffer. */
+        -:  799:static size_t bufalloc;		/* Allocated buffer size, counting slop. */
+        -:  800:static int bufdesc;		/* File descriptor. */
+        -:  801:static char *bufbeg;		/* Beginning of user-visible stuff. */
+        -:  802:static char *buflim;		/* Limit of user-visible stuff. */
+        -:  803:static size_t pagesize;		/* alignment of memory pages */
+        -:  804:static off_t bufoffset;		/* Read offset.  */
+        -:  805:static off_t after_last_match;	/* Pointer after last matching line that
+        -:  806:                                   would have been output if we were
+        -:  807:                                   outputting characters. */
+        -:  808:static bool skip_nuls;		/* Skip '\0' in data.  */
+        -:  809:static bool skip_empty_lines;	/* Skip empty lines in data.  */
+        -:  810:static uintmax_t totalnl;	/* Total newline count before lastnl. */
+        -:  811:
+        -:  812:/* Initial buffer size, not counting slop. */
+        -:  813:enum { INITIAL_BUFSIZE = 96 * 1024 };
+        -:  814:
+        -:  815:/* Return VAL aligned to the next multiple of ALIGNMENT.  VAL can be
+        -:  816:   an integer or a pointer.  Both args must be free of side effects.  */
+        -:  817:#define ALIGN_TO(val, alignment) \
+        -:  818:  ((size_t) (val) % (alignment) == 0 \
+        -:  819:   ? (val) \
+        -:  820:   : (val) + ((alignment) - (size_t) (val) % (alignment)))
+        -:  821:
+        -:  822:/* Add two numbers that count input bytes or lines, and report an
+        -:  823:   error if the addition overflows.  */
+        -:  824:static uintmax_t
+function add_count called 0 returned 0% blocks executed 0%
+    #####:  825:add_count (uintmax_t a, uintmax_t b)
+        -:  826:{
+    #####:  827:  uintmax_t sum = a + b;
+    #####:  828:  if (sum < a)
+branch  0 never executed
+branch  1 never executed
+    #####:  829:    die (EXIT_TROUBLE, 0, _("input is too large to count"));
+call    0 never executed
+call    1 never executed
+    #####:  830:  return sum;
+        -:  831:}
+        -:  832:
+        -:  833:/* Return true if BUF (of size SIZE) is all zeros.  */
+        -:  834:static bool
+function all_zeros called 0 returned 0% blocks executed 0%
+    #####:  835:all_zeros (char const *buf, size_t size)
+        -:  836:{
+    #####:  837:  for (char const *p = buf; p < buf + size; p++)
+branch  0 never executed
+branch  1 never executed
+    #####:  838:    if (*p)
+branch  0 never executed
+branch  1 never executed
+    #####:  839:      return false;
+    #####:  840:  return true;
+        -:  841:}
+        -:  842:
+        -:  843:/* Reset the buffer for a new file, returning false if we should skip it.
+        -:  844:   Initialize on the first time through. */
+        -:  845:static bool
+function reset called 1 returned 100% blocks executed 54%
+        1:  846:reset (int fd, struct stat const *st)
+        -:  847:{
+        1:  848:  bufbeg = buflim = ALIGN_TO (buffer + 1, pagesize);
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        1:  849:  bufbeg[-1] = eolbyte;
+        1:  850:  bufdesc = fd;
+        1:  851:  bufoffset = fd == STDIN_FILENO ? lseek (fd, 0, SEEK_CUR) : 0;
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+call    2 returned 100%
+        1:  852:  seek_failed = bufoffset < 0;
+        -:  853:
+        -:  854:  /* Assume SEEK_DATA fails if SEEK_CUR does.  */
+        1:  855:  seek_data_failed = seek_failed;
+        -:  856:
+        1:  857:  if (seek_failed)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -:  858:    {
+    #####:  859:      if (errno != ESPIPE)
+branch  0 never executed
+branch  1 never executed
+        -:  860:        {
+    #####:  861:          suppressible_error (errno);
+call    0 never executed
+    #####:  862:          return false;
+        -:  863:        }
+    #####:  864:      bufoffset = 0;
+        -:  865:    }
+        1:  866:  return true;
+        -:  867:}
+        -:  868:
+        -:  869:/* Read new stuff into the buffer, saving the specified
+        -:  870:   amount of old stuff.  When we're done, 'bufbeg' points
+        -:  871:   to the beginning of the buffer contents, and 'buflim'
+        -:  872:   points just after the end.  Return false if there's an error.  */
+        -:  873:static bool
+function fillbuf called 1 returned 100% blocks executed 21%
+        1:  874:fillbuf (size_t save, struct stat const *st)
+        -:  875:{
+        -:  876:  size_t fillsize;
+        1:  877:  bool cc = true;
+        -:  878:  char *readbuf;
+        -:  879:  size_t readsize;
+        -:  880:
+        -:  881:  /* Offset from start of buffer to start of old stuff
+        -:  882:     that we want to save.  */
+        1:  883:  size_t saved_offset = buflim - save - buffer;
+        -:  884:
+        1:  885:  if (pagesize <= buffer + bufalloc - sizeof (uword) - buflim)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        -:  886:    {
+        1:  887:      readbuf = buflim;
+        1:  888:      bufbeg = buflim - save;
+        -:  889:    }
+        -:  890:  else
+        -:  891:    {
+    #####:  892:      size_t minsize = save + pagesize;
+        -:  893:      size_t newsize;
+        -:  894:      size_t newalloc;
+        -:  895:      char *newbuf;
+        -:  896:
+        -:  897:      /* Grow newsize until it is at least as great as minsize.  */
+    #####:  898:      for (newsize = bufalloc - pagesize - sizeof (uword);
+branch  0 never executed
+branch  1 never executed
+        -:  899:           newsize < minsize;
+    #####:  900:           newsize *= 2)
+    #####:  901:        if ((SIZE_MAX - pagesize - sizeof (uword)) / 2 < newsize)
+branch  0 never executed
+branch  1 never executed
+    #####:  902:          xalloc_die ();
+call    0 never executed
+        -:  903:
+        -:  904:      /* Try not to allocate more memory than the file size indicates,
+        -:  905:         as that might cause unnecessary memory exhaustion if the file
+        -:  906:         is large.  However, do not use the original file size as a
+        -:  907:         heuristic if we've already read past the file end, as most
+        -:  908:         likely the file is growing.  */
+    #####:  909:      if (usable_st_size (st))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+        -:  910:        {
+    #####:  911:          off_t to_be_read = st->st_size - bufoffset;
+    #####:  912:          off_t maxsize_off = save + to_be_read;
+    #####:  913:          if (0 <= to_be_read && to_be_read <= maxsize_off
+branch  0 never executed
+branch  1 never executed
+    #####:  914:              && maxsize_off == (size_t) maxsize_off
+branch  0 never executed
+branch  1 never executed
+    #####:  915:              && minsize <= (size_t) maxsize_off
+branch  0 never executed
+branch  1 never executed
+    #####:  916:              && (size_t) maxsize_off < newsize)
+branch  0 never executed
+branch  1 never executed
+    #####:  917:            newsize = maxsize_off;
+        -:  918:        }
+        -:  919:
+        -:  920:      /* Add enough room so that the buffer is aligned and has room
+        -:  921:         for byte sentinels fore and aft, and so that a uword can
+        -:  922:         be read aft.  */
+    #####:  923:      newalloc = newsize + pagesize + sizeof (uword);
+        -:  924:
+    #####:  925:      newbuf = bufalloc < newalloc ? xmalloc (bufalloc = newalloc) : buffer;
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+    #####:  926:      readbuf = ALIGN_TO (newbuf + 1 + save, pagesize);
+branch  0 never executed
+branch  1 never executed
+    #####:  927:      bufbeg = readbuf - save;
+    #####:  928:      memmove (bufbeg, buffer + saved_offset, save);
+    #####:  929:      bufbeg[-1] = eolbyte;
+    #####:  930:      if (newbuf != buffer)
+branch  0 never executed
+branch  1 never executed
+        -:  931:        {
+    #####:  932:          free (buffer);
+    #####:  933:          buffer = newbuf;
+        -:  934:        }
+        -:  935:    }
+        -:  936:
+        1:  937:  clear_asan_poison ();
+call    0 returned 100%
+        -:  938:
+        1:  939:  readsize = buffer + bufalloc - sizeof (uword) - readbuf;
+        1:  940:  readsize -= readsize % pagesize;
+        -:  941:
+        -:  942:  while (true)
+        -:  943:    {
+        1:  944:      fillsize = safe_read (bufdesc, readbuf, readsize);
+call    0 returned 100%
+        1:  945:      if (fillsize == SAFE_READ_ERROR)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -:  946:        {
+    #####:  947:          fillsize = 0;
+    #####:  948:          cc = false;
+        -:  949:        }
+        1:  950:      bufoffset += fillsize;
+        -:  951:
+        1:  952:      if (((fillsize == 0) | !skip_nuls) || !all_zeros (readbuf, fillsize))
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+call    2 never executed
+branch  3 never executed
+branch  4 never executed
+        -:  953:        break;
+    #####:  954:      totalnl = add_count (totalnl, fillsize);
+call    0 never executed
+        -:  955:
+    #####:  956:      if (SEEK_DATA != SEEK_SET && !seek_data_failed)
+branch  0 never executed
+branch  1 never executed
+        -:  957:        {
+        -:  958:          /* Solaris SEEK_DATA fails with errno == ENXIO in a hole at EOF.  */
+    #####:  959:          off_t data_start = lseek (bufdesc, bufoffset, SEEK_DATA);
+call    0 never executed
+    #####:  960:          if (data_start < 0 && errno == ENXIO
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  961:              && usable_st_size (st) && bufoffset < st->st_size)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+    #####:  962:            data_start = lseek (bufdesc, 0, SEEK_END);
+call    0 never executed
+        -:  963:
+    #####:  964:          if (data_start < 0)
+branch  0 never executed
+branch  1 never executed
+    #####:  965:            seek_data_failed = true;
+        -:  966:          else
+        -:  967:            {
+    #####:  968:              totalnl = add_count (totalnl, data_start - bufoffset);
+call    0 never executed
+    #####:  969:              bufoffset = data_start;
+        -:  970:            }
+        -:  971:        }
+        -:  972:    }
+        -:  973:
+        1:  974:  buflim = readbuf + fillsize;
+        -:  975:
+        -:  976:  /* Initialize the following word, because skip_easy_bytes and some
+        -:  977:     matchers read (but do not use) those bytes.  This avoids false
+        -:  978:     positive reports of these bytes being used uninitialized.  */
+        1:  979:  memset (buflim, 0, sizeof (uword));
+        -:  980:
+        -:  981:  /* Mark the part of the buffer not filled by the read or set by
+        -:  982:     the above memset call as ASAN-poisoned.  */
+        1:  983:  asan_poison (buflim + sizeof (uword),
+call    0 returned 100%
+        1:  984:               bufalloc - (buflim - buffer) - sizeof (uword));
+        -:  985:
+        1:  986:  return cc;
+        -:  987:}
+        -:  988:
+        -:  989:/* Flags controlling the style of output. */
+        -:  990:static enum
+        -:  991:{
+        -:  992:  BINARY_BINARY_FILES,
+        -:  993:  TEXT_BINARY_FILES,
+        -:  994:  WITHOUT_MATCH_BINARY_FILES
+        -:  995:} binary_files;		/* How to handle binary files.  */
+        -:  996:
+        -:  997:/* Options for output as a list of matching/non-matching files */
+        -:  998:static enum
+        -:  999:{
+        -: 1000:  LISTFILES_NONE,
+        -: 1001:  LISTFILES_MATCHING,
+        -: 1002:  LISTFILES_NONMATCHING,
+        -: 1003:} list_files;
+        -: 1004:
+        -: 1005:/* Whether to output filenames.  1 means yes, 0 means no, and -1 means
+        -: 1006:   'grep -r PATTERN FILE' was used and it is not known yet whether
+        -: 1007:   FILE is a directory (which means yes) or not (which means no).  */
+        -: 1008:static int out_file;
+        -: 1009:
+        -: 1010:static int filename_mask;	/* If zero, output nulls after filenames.  */
+        -: 1011:static bool out_quiet;		/* Suppress all normal output. */
+        -: 1012:static bool out_invert;		/* Print nonmatching stuff. */
+        -: 1013:static bool out_line;		/* Print line numbers. */
+        -: 1014:static bool out_byte;		/* Print byte offsets. */
+        -: 1015:static intmax_t out_before;	/* Lines of leading context. */
+        -: 1016:static intmax_t out_after;	/* Lines of trailing context. */
+        -: 1017:static bool count_matches;	/* Count matching lines.  */
+        -: 1018:static intmax_t max_count;	/* Max number of selected
+        -: 1019:                                   lines from an input file.  */
+        -: 1020:static bool line_buffered;	/* Use line buffering.  */
+        -: 1021:static char *label = NULL;      /* Fake filename for stdin */
+        -: 1022:
+        -: 1023:
+        -: 1024:/* Internal variables to keep track of byte count, context, etc. */
+        -: 1025:static uintmax_t totalcc;	/* Total character count before bufbeg. */
+        -: 1026:static char const *lastnl;	/* Pointer after last newline counted. */
+        -: 1027:static char *lastout;		/* Pointer after last character output;
+        -: 1028:                                   NULL if no character has been output
+        -: 1029:                                   or if it's conceptually before bufbeg. */
+        -: 1030:static intmax_t outleft;	/* Maximum number of selected lines.  */
+        -: 1031:static intmax_t pending;	/* Pending lines of output.
+        -: 1032:                                   Always kept 0 if out_quiet is true.  */
+        -: 1033:static bool done_on_match;	/* Stop scanning file on first match.  */
+        -: 1034:static bool exit_on_match;	/* Exit on first match.  */
+        -: 1035:static bool dev_null_output;	/* Stdout is known to be /dev/null.  */
+        -: 1036:static bool binary;		/* Use binary rather than text I/O.  */
+        -: 1037:
+        -: 1038:static void
+function nlscan called 0 returned 0% blocks executed 0%
+    #####: 1039:nlscan (char const *lim)
+        -: 1040:{
+    #####: 1041:  size_t newlines = 0;
+        -: 1042:  char const *beg;
+    #####: 1043:  for (beg = lastnl; beg < lim; beg++)
+branch  0 never executed
+branch  1 never executed
+        -: 1044:    {
+    #####: 1045:      beg = memchr (beg, eolbyte, lim - beg);
+    #####: 1046:      if (!beg)
+branch  0 never executed
+branch  1 never executed
+    #####: 1047:        break;
+    #####: 1048:      newlines++;
+        -: 1049:    }
+    #####: 1050:  totalnl = add_count (totalnl, newlines);
+call    0 never executed
+    #####: 1051:  lastnl = lim;
+    #####: 1052:}
+        -: 1053:
+        -: 1054:/* Print the current filename.  */
+        -: 1055:static void
+function print_filename called 0 returned 0% blocks executed 0%
+    #####: 1056:print_filename (void)
+        -: 1057:{
+    #####: 1058:  pr_sgr_start_if (filename_color);
+call    0 never executed
+    #####: 1059:  fputs_errno (input_filename ());
+call    0 never executed
+call    1 never executed
+    #####: 1060:  pr_sgr_end_if (filename_color);
+call    0 never executed
+    #####: 1061:}
+        -: 1062:
+        -: 1063:/* Print a character separator.  */
+        -: 1064:static void
+function print_sep called 0 returned 0% blocks executed 0%
+    #####: 1065:print_sep (char sep)
+        -: 1066:{
+    #####: 1067:  pr_sgr_start_if (sep_color);
+call    0 never executed
+    #####: 1068:  putchar_errno (sep);
+call    0 never executed
+    #####: 1069:  pr_sgr_end_if (sep_color);
+call    0 never executed
+    #####: 1070:}
+        -: 1071:
+        -: 1072:/* Print a line number or a byte offset.  */
+        -: 1073:static void
+function print_offset called 0 returned 0% blocks executed 0%
+    #####: 1074:print_offset (uintmax_t pos, const char *color)
+        -: 1075:{
+    #####: 1076:  pr_sgr_start_if (color);
+call    0 never executed
+    #####: 1077:  printf_errno ("%*"PRIuMAX, offset_width, pos);
+call    0 never executed
+    #####: 1078:  pr_sgr_end_if (color);
+call    0 never executed
+    #####: 1079:}
+        -: 1080:
+        -: 1081:/* Print a whole line head (filename, line, byte).  The output data
+        -: 1082:   starts at BEG and contains LEN bytes; it is followed by at least
+        -: 1083:   sizeof (uword) bytes, the first of which may be temporarily modified.
+        -: 1084:   The output data comes from what is perhaps a larger input line that
+        -: 1085:   goes until LIM, where LIM[-1] is an end-of-line byte.  Use SEP as
+        -: 1086:   the separator on output.
+        -: 1087:
+        -: 1088:   Return true unless the line was suppressed due to an encoding error.  */
+        -: 1089:
+        -: 1090:static bool
+function print_line_head called 0 returned 0% blocks executed 0%
+    #####: 1091:print_line_head (char *beg, size_t len, char const *lim, char sep)
+        -: 1092:{
+    #####: 1093:  if (binary_files != TEXT_BINARY_FILES)
+branch  0 never executed
+branch  1 never executed
+        -: 1094:    {
+    #####: 1095:      char ch = beg[len];
+    #####: 1096:      bool encoding_errors = buf_has_encoding_errors (beg, len);
+call    0 never executed
+    #####: 1097:      beg[len] = ch;
+    #####: 1098:      if (encoding_errors)
+branch  0 never executed
+branch  1 never executed
+        -: 1099:        {
+    #####: 1100:          encoding_error_output = true;
+    #####: 1101:          return false;
+        -: 1102:        }
+        -: 1103:    }
+        -: 1104:
+    #####: 1105:  if (out_file)
+branch  0 never executed
+branch  1 never executed
+        -: 1106:    {
+    #####: 1107:      print_filename ();
+call    0 never executed
+    #####: 1108:      if (filename_mask)
+branch  0 never executed
+branch  1 never executed
+    #####: 1109:        print_sep (sep);
+call    0 never executed
+        -: 1110:      else
+    #####: 1111:        putchar_errno (0);
+call    0 never executed
+        -: 1112:    }
+        -: 1113:
+    #####: 1114:  if (out_line)
+branch  0 never executed
+branch  1 never executed
+        -: 1115:    {
+    #####: 1116:      if (lastnl < lim)
+branch  0 never executed
+branch  1 never executed
+        -: 1117:        {
+    #####: 1118:          nlscan (beg);
+call    0 never executed
+    #####: 1119:          totalnl = add_count (totalnl, 1);
+call    0 never executed
+    #####: 1120:          lastnl = lim;
+        -: 1121:        }
+    #####: 1122:      print_offset (totalnl, line_num_color);
+call    0 never executed
+    #####: 1123:      print_sep (sep);
+call    0 never executed
+        -: 1124:    }
+        -: 1125:
+    #####: 1126:  if (out_byte)
+branch  0 never executed
+branch  1 never executed
+        -: 1127:    {
+    #####: 1128:      uintmax_t pos = add_count (totalcc, beg - bufbeg);
+call    0 never executed
+    #####: 1129:      print_offset (pos, byte_num_color);
+call    0 never executed
+    #####: 1130:      print_sep (sep);
+call    0 never executed
+        -: 1131:    }
+        -: 1132:
+    #####: 1133:  if (align_tabs && (out_file | out_line | out_byte) && len != 0)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+    #####: 1134:    putchar_errno ('\t');
+call    0 never executed
+        -: 1135:
+    #####: 1136:  return true;
+        -: 1137:}
+        -: 1138:
+        -: 1139:static char *
+function print_line_middle called 0 returned 0% blocks executed 0%
+    #####: 1140:print_line_middle (char *beg, char *lim,
+        -: 1141:                   const char *line_color, const char *match_color)
+        -: 1142:{
+        -: 1143:  size_t match_size;
+        -: 1144:  size_t match_offset;
+        -: 1145:  char *cur;
+    #####: 1146:  char *mid = NULL;
+        -: 1147:  char *b;
+        -: 1148:
+    #####: 1149:  for (cur = beg;
+branch  0 never executed
+branch  1 never executed
+        -: 1150:       (cur < lim
+    #####: 1151:        && ((match_offset = execute (compiled_pattern, beg, lim - beg,
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+        -: 1152:                                     &match_size, cur)) != (size_t) -1));
+    #####: 1153:       cur = b + match_size)
+        -: 1154:    {
+    #####: 1155:      b = beg + match_offset;
+        -: 1156:
+        -: 1157:      /* Avoid matching the empty line at the end of the buffer. */
+    #####: 1158:      if (b == lim)
+branch  0 never executed
+branch  1 never executed
+    #####: 1159:        break;
+        -: 1160:
+        -: 1161:      /* Avoid hanging on grep --color "" foo */
+    #####: 1162:      if (match_size == 0)
+branch  0 never executed
+branch  1 never executed
+        -: 1163:        {
+        -: 1164:          /* Make minimal progress; there may be further non-empty matches.  */
+        -: 1165:          /* XXX - Could really advance by one whole multi-octet character.  */
+    #####: 1166:          match_size = 1;
+    #####: 1167:          if (!mid)
+branch  0 never executed
+branch  1 never executed
+    #####: 1168:            mid = cur;
+        -: 1169:        }
+        -: 1170:      else
+        -: 1171:        {
+        -: 1172:          /* This function is called on a matching line only,
+        -: 1173:             but is it selected or rejected/context?  */
+    #####: 1174:          if (only_matching)
+branch  0 never executed
+branch  1 never executed
+        -: 1175:            {
+    #####: 1176:              char sep = out_invert ? SEP_CHAR_REJECTED : SEP_CHAR_SELECTED;
+branch  0 never executed
+branch  1 never executed
+    #####: 1177:              if (! print_line_head (b, match_size, lim, sep))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####: 1178:                return NULL;
+        -: 1179:            }
+        -: 1180:          else
+        -: 1181:            {
+    #####: 1182:              pr_sgr_start (line_color);
+call    0 never executed
+    #####: 1183:              if (mid)
+branch  0 never executed
+branch  1 never executed
+        -: 1184:                {
+    #####: 1185:                  cur = mid;
+    #####: 1186:                  mid = NULL;
+        -: 1187:                }
+    #####: 1188:              fwrite_errno (cur, 1, b - cur);
+call    0 never executed
+        -: 1189:            }
+        -: 1190:
+    #####: 1191:          pr_sgr_start_if (match_color);
+call    0 never executed
+    #####: 1192:          fwrite_errno (b, 1, match_size);
+call    0 never executed
+    #####: 1193:          pr_sgr_end_if (match_color);
+call    0 never executed
+    #####: 1194:          if (only_matching)
+branch  0 never executed
+branch  1 never executed
+    #####: 1195:            putchar_errno (eolbyte);
+call    0 never executed
+        -: 1196:        }
+        -: 1197:    }
+        -: 1198:
+    #####: 1199:  if (only_matching)
+branch  0 never executed
+branch  1 never executed
+    #####: 1200:    cur = lim;
+    #####: 1201:  else if (mid)
+branch  0 never executed
+branch  1 never executed
+    #####: 1202:    cur = mid;
+        -: 1203:
+    #####: 1204:  return cur;
+        -: 1205:}
+        -: 1206:
+        -: 1207:static char *
+function print_line_tail called 0 returned 0% blocks executed 0%
+    #####: 1208:print_line_tail (char *beg, const char *lim, const char *line_color)
+        -: 1209:{
+        -: 1210:  size_t eol_size;
+        -: 1211:  size_t tail_size;
+        -: 1212:
+    #####: 1213:  eol_size   = (lim > beg && lim[-1] == eolbyte);
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1214:  eol_size  += (lim - eol_size > beg && lim[-(1 + eol_size)] == '\r');
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1215:  tail_size  =  lim - eol_size - beg;
+        -: 1216:
+    #####: 1217:  if (tail_size > 0)
+branch  0 never executed
+branch  1 never executed
+        -: 1218:    {
+    #####: 1219:      pr_sgr_start (line_color);
+call    0 never executed
+    #####: 1220:      fwrite_errno (beg, 1, tail_size);
+call    0 never executed
+    #####: 1221:      beg += tail_size;
+    #####: 1222:      pr_sgr_end (line_color);
+call    0 never executed
+        -: 1223:    }
+        -: 1224:
+    #####: 1225:  return beg;
+        -: 1226:}
+        -: 1227:
+        -: 1228:static void
+function prline called 0 returned 0% blocks executed 0%
+    #####: 1229:prline (char *beg, char *lim, char sep)
+        -: 1230:{
+        -: 1231:  bool matching;
+        -: 1232:  const char *line_color;
+        -: 1233:  const char *match_color;
+        -: 1234:
+    #####: 1235:  if (!only_matching)
+branch  0 never executed
+branch  1 never executed
+    #####: 1236:    if (! print_line_head (beg, lim - beg - 1, lim, sep))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####: 1237:      return;
+        -: 1238:
+    #####: 1239:  matching = (sep == SEP_CHAR_SELECTED) ^ out_invert;
+        -: 1240:
+    #####: 1241:  if (color_option)
+branch  0 never executed
+branch  1 never executed
+        -: 1242:    {
+    #####: 1243:      line_color = (((sep == SEP_CHAR_SELECTED)
+    #####: 1244:                     ^ (out_invert && (color_option < 0)))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1245:                    ? selected_line_color  : context_line_color);
+branch  0 never executed
+branch  1 never executed
+    #####: 1246:      match_color = (sep == SEP_CHAR_SELECTED
+    #####: 1247:                     ? selected_match_color : context_match_color);
+branch  0 never executed
+branch  1 never executed
+        -: 1248:    }
+        -: 1249:  else
+    #####: 1250:    line_color = match_color = NULL; /* Shouldn't be used.  */
+        -: 1251:
+    #####: 1252:  if ((only_matching && matching)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1253:      || (color_option && (*line_color || *match_color)))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+        -: 1254:    {
+        -: 1255:      /* We already know that non-matching lines have no match (to colorize). */
+    #####: 1256:      if (matching && (only_matching || *match_color))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+        -: 1257:        {
+    #####: 1258:          beg = print_line_middle (beg, lim, line_color, match_color);
+call    0 never executed
+    #####: 1259:          if (! beg)
+branch  0 never executed
+branch  1 never executed
+    #####: 1260:            return;
+        -: 1261:        }
+        -: 1262:
+    #####: 1263:      if (!only_matching && *line_color)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -: 1264:        {
+        -: 1265:          /* This code is exercised at least when grep is invoked like this:
+        -: 1266:             echo k| GREP_COLORS='sl=01;32' src/grep k --color=always  */
+    #####: 1267:          beg = print_line_tail (beg, lim, line_color);
+call    0 never executed
+        -: 1268:        }
+        -: 1269:    }
+        -: 1270:
+    #####: 1271:  if (!only_matching && lim > beg)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1272:    fwrite_errno (beg, 1, lim - beg);
+call    0 never executed
+        -: 1273:
+    #####: 1274:  if (line_buffered)
+branch  0 never executed
+branch  1 never executed
+    #####: 1275:    fflush_errno ();
+call    0 never executed
+        -: 1276:
+    #####: 1277:  if (stdout_errno)
+branch  0 never executed
+branch  1 never executed
+    #####: 1278:    die (EXIT_TROUBLE, stdout_errno, _("write error"));
+call    0 never executed
+call    1 never executed
+        -: 1279:
+    #####: 1280:  lastout = lim;
+        -: 1281:}
+        -: 1282:
+        -: 1283:/* Print pending lines of trailing context prior to LIM.  */
+        -: 1284:static void
+function prpending called 0 returned 0% blocks executed 0%
+    #####: 1285:prpending (char const *lim)
+        -: 1286:{
+    #####: 1287:  if (!lastout)
+branch  0 never executed
+branch  1 never executed
+    #####: 1288:    lastout = bufbeg;
+    #####: 1289:  for (; 0 < pending && lastout < lim; pending--)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -: 1290:    {
+    #####: 1291:      char *nl = memchr (lastout, eolbyte, lim - lastout);
+    #####: 1292:      prline (lastout, nl + 1, SEP_CHAR_REJECTED);
+call    0 never executed
+        -: 1293:    }
+    #####: 1294:}
+        -: 1295:
+        -: 1296:/* Output the lines between BEG and LIM.  Deal with context.  */
+        -: 1297:static void
+function prtext called 1 returned 100% blocks executed 21%
+        1: 1298:prtext (char *beg, char *lim)
+        -: 1299:{
+        -: 1300:  static bool used;	/* Avoid printing SEP_STR_GROUP before any output.  */
+        1: 1301:  char eol = eolbyte;
+        -: 1302:
+        1: 1303:  if (!out_quiet && pending > 0)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+branch  2 never executed
+branch  3 never executed
+    #####: 1304:    prpending (beg);
+call    0 never executed
+        -: 1305:
+        1: 1306:  char *p = beg;
+        -: 1307:
+        1: 1308:  if (!out_quiet)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -: 1309:    {
+        -: 1310:      /* Deal with leading context.  */
+    #####: 1311:      char const *bp = lastout ? lastout : bufbeg;
+branch  0 never executed
+branch  1 never executed
+        -: 1312:      intmax_t i;
+    #####: 1313:      for (i = 0; i < out_before; ++i)
+branch  0 never executed
+branch  1 never executed
+    #####: 1314:        if (p > bp)
+branch  0 never executed
+branch  1 never executed
+        -: 1315:          do
+    #####: 1316:            --p;
+    #####: 1317:          while (p[-1] != eol);
+branch  0 never executed
+branch  1 never executed
+        -: 1318:
+        -: 1319:      /* Print the group separator unless the output is adjacent to
+        -: 1320:         the previous output in the file.  */
+    #####: 1321:      if ((0 <= out_before || 0 <= out_after) && used
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+    #####: 1322:          && p != lastout && group_separator)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -: 1323:        {
+    #####: 1324:          pr_sgr_start_if (sep_color);
+call    0 never executed
+    #####: 1325:          fputs_errno (group_separator);
+call    0 never executed
+    #####: 1326:          pr_sgr_end_if (sep_color);
+call    0 never executed
+    #####: 1327:          putchar_errno ('\n');
+call    0 never executed
+        -: 1328:        }
+        -: 1329:
+    #####: 1330:      while (p < beg)
+branch  0 never executed
+branch  1 never executed
+        -: 1331:        {
+    #####: 1332:          char *nl = memchr (p, eol, beg - p);
+    #####: 1333:          nl++;
+    #####: 1334:          prline (p, nl, SEP_CHAR_REJECTED);
+call    0 never executed
+    #####: 1335:          p = nl;
+        -: 1336:        }
+        -: 1337:    }
+        -: 1338:
+        -: 1339:  intmax_t n;
+        1: 1340:  if (out_invert)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -: 1341:    {
+        -: 1342:      /* One or more lines are output.  */
+    #####: 1343:      for (n = 0; p < lim && n < outleft; n++)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -: 1344:        {
+    #####: 1345:          char *nl = memchr (p, eol, lim - p);
+    #####: 1346:          nl++;
+    #####: 1347:          if (!out_quiet)
+branch  0 never executed
+branch  1 never executed
+    #####: 1348:            prline (p, nl, SEP_CHAR_SELECTED);
+call    0 never executed
+    #####: 1349:          p = nl;
+        -: 1350:        }
+        -: 1351:    }
+        -: 1352:  else
+        -: 1353:    {
+        -: 1354:      /* Just one line is output.  */
+        1: 1355:      if (!out_quiet)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 1356:        prline (beg, lim, SEP_CHAR_SELECTED);
+call    0 never executed
+        1: 1357:      n = 1;
+        1: 1358:      p = lim;
+        -: 1359:    }
+        -: 1360:
+        1: 1361:  after_last_match = bufoffset - (buflim - p);
+        1: 1362:  pending = out_quiet ? 0 : MAX (0, out_after);
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        1: 1363:  used = true;
+        1: 1364:  outleft -= n;
+        1: 1365:}
+        -: 1366:
+        -: 1367:/* Replace all NUL bytes in buffer P (which ends at LIM) with EOL.
+        -: 1368:   This avoids running out of memory when binary input contains a long
+        -: 1369:   sequence of zeros, which would otherwise be considered to be part
+        -: 1370:   of a long line.  P[LIM] should be EOL.  */
+        -: 1371:static void
+function zap_nuls called 1 returned 100% blocks executed 100%
+        1: 1372:zap_nuls (char *p, char *lim, char eol)
+        -: 1373:{
+        1: 1374:  if (eol)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        -: 1375:    while (true)
+        -: 1376:      {
+        3: 1377:        *lim = '\0';
+        2: 1378:        p += strlen (p);
+        2: 1379:        *lim = eol;
+        2: 1380:        if (p == lim)
+branch  0 taken 50% (fallthrough)
+branch  1 taken 50%
+        1: 1381:          break;
+        -: 1382:        do
+       20: 1383:          *p++ = eol;
+       20: 1384:        while (!*p);
+branch  0 taken 95%
+branch  1 taken 5% (fallthrough)
+        -: 1385:      }
+        1: 1386:}
+        -: 1387:
+        -: 1388:/* Scan the specified portion of the buffer, matching lines (or
+        -: 1389:   between matching lines if OUT_INVERT is true).  Return a count of
+        -: 1390:   lines printed.  Replace all NUL bytes with NUL_ZAPPER as we go.  */
+        -: 1391:static intmax_t
+function grepbuf called 1 returned 100% blocks executed 61%
+        1: 1392:grepbuf (char *beg, char const *lim)
+        -: 1393:{
+        1: 1394:  intmax_t outleft0 = outleft;
+        -: 1395:  char *endp;
+        -: 1396:
+        2: 1397:  for (char *p = beg; p < lim; p = endp)
+branch  0 taken 100%
+branch  1 taken 0% (fallthrough)
+        -: 1398:    {
+        -: 1399:      size_t match_size;
+        1: 1400:      size_t match_offset = execute (compiled_pattern, p, lim - p,
+call    0 returned 100%
+        -: 1401:                                     &match_size, NULL);
+        1: 1402:      if (match_offset == (size_t) -1)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -: 1403:        {
+    #####: 1404:          if (!out_invert)
+branch  0 never executed
+branch  1 never executed
+        1: 1405:            break;
+    #####: 1406:          match_offset = lim - p;
+    #####: 1407:          match_size = 0;
+        -: 1408:        }
+        1: 1409:      char *b = p + match_offset;
+        1: 1410:      endp = b + match_size;
+        -: 1411:      /* Avoid matching the empty line at the end of the buffer. */
+        1: 1412:      if (!out_invert && b == lim)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+branch  2 taken 0% (fallthrough)
+branch  3 taken 100%
+    #####: 1413:        break;
+        1: 1414:      if (!out_invert || p < b)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+branch  2 never executed
+branch  3 never executed
+        -: 1415:        {
+        1: 1416:          char *prbeg = out_invert ? p : b;
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        1: 1417:          char *prend = out_invert ? b : endp;
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        1: 1418:          prtext (prbeg, prend);
+call    0 returned 100%
+        1: 1419:          if (!outleft || done_on_match)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+branch  2 taken 100% (fallthrough)
+branch  3 taken 0%
+        -: 1420:            {
+        1: 1421:              if (exit_on_match)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 1422:                exit (errseen ? exit_failure : EXIT_SUCCESS);
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+        1: 1423:              break;
+        -: 1424:            }
+        -: 1425:        }
+        -: 1426:    }
+        -: 1427:
+        1: 1428:  return outleft0 - outleft;
+        -: 1429:}
+        -: 1430:
+        -: 1431:/* Search a given (non-directory) file.  Return a count of lines printed.
+        -: 1432:   Set *INEOF to true if end-of-file reached.  */
+        -: 1433:static intmax_t
+function grep called 1 returned 100% blocks executed 43%
+        1: 1434:grep (int fd, struct stat const *st, bool *ineof)
+        -: 1435:{
+        -: 1436:  intmax_t nlines, i;
+        -: 1437:  size_t residue, save;
+        -: 1438:  char oldc;
+        -: 1439:  char *beg;
+        -: 1440:  char *lim;
+        1: 1441:  char eol = eolbyte;
+        1: 1442:  char nul_zapper = '\0';
+        1: 1443:  bool done_on_match_0 = done_on_match;
+        1: 1444:  bool out_quiet_0 = out_quiet;
+        -: 1445:
+        -: 1446:  /* The value of NLINES when nulls were first deduced in the input;
+        -: 1447:     this is not necessarily the same as the number of matching lines
+        -: 1448:     before the first null.  -1 if no input nulls have been deduced.  */
+        1: 1449:  intmax_t nlines_first_null = -1;
+        -: 1450:
+        1: 1451:  if (! reset (fd, st))
+call    0 returned 100%
+branch  1 taken 0% (fallthrough)
+branch  2 taken 100%
+    #####: 1452:    return 0;
+        -: 1453:
+        1: 1454:  totalcc = 0;
+        1: 1455:  lastout = 0;
+        1: 1456:  totalnl = 0;
+        1: 1457:  outleft = max_count;
+        1: 1458:  after_last_match = 0;
+        1: 1459:  pending = 0;
+        1: 1460:  skip_nuls = skip_empty_lines && !eol;
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+branch  2 never executed
+branch  3 never executed
+        1: 1461:  encoding_error_output = false;
+        -: 1462:
+        1: 1463:  nlines = 0;
+        1: 1464:  residue = 0;
+        1: 1465:  save = 0;
+        -: 1466:
+        1: 1467:  if (! fillbuf (save, st))
+call    0 returned 100%
+branch  1 taken 0% (fallthrough)
+branch  2 taken 100%
+        -: 1468:    {
+    #####: 1469:      suppressible_error (errno);
+call    0 never executed
+    #####: 1470:      return 0;
+        -: 1471:    }
+        -: 1472:
+        1: 1473:  offset_width = 0;
+        1: 1474:  if (align_tabs)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -: 1475:    {
+        -: 1476:      /* Width is log of maximum number.  Line numbers are origin-1.  */
+    #####: 1477:      uintmax_t num = usable_st_size (st) ? st->st_size : UINTMAX_MAX;
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####: 1478:      num += out_line && num < UINTMAX_MAX;
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -: 1479:      do
+    #####: 1480:        offset_width++;
+    #####: 1481:      while ((num /= 10) != 0);
+branch  0 never executed
+branch  1 never executed
+        -: 1482:    }
+        -: 1483:
+        1: 1484:  for (bool firsttime = true; ; firsttime = false)
+        -: 1485:    {
+        1: 1486:      if (nlines_first_null < 0 && eol && binary_files != TEXT_BINARY_FILES
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+branch  2 taken 100% (fallthrough)
+branch  3 taken 0%
+branch  4 taken 100% (fallthrough)
+branch  5 taken 0%
+        1: 1487:          && (buf_has_nulls (bufbeg, buflim - bufbeg)
+call    0 returned 100%
+branch  1 taken 0% (fallthrough)
+branch  2 taken 100%
+    #####: 1488:              || (firsttime && file_must_have_nulls (buflim - bufbeg, fd, st))))
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+branch  3 never executed
+branch  4 never executed
+        -: 1489:        {
+        1: 1490:          if (binary_files == WITHOUT_MATCH_BINARY_FILES)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 1491:            return 0;
+        1: 1492:          if (!count_matches)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        1: 1493:            done_on_match = out_quiet = true;
+        1: 1494:          nlines_first_null = nlines;
+        1: 1495:          nul_zapper = eol;
+        1: 1496:          skip_nuls = skip_empty_lines;
+        -: 1497:        }
+        -: 1498:
+        1: 1499:      lastnl = bufbeg;
+        1: 1500:      if (lastout)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 1501:        lastout = bufbeg;
+        -: 1502:
+        1: 1503:      beg = bufbeg + save;
+        -: 1504:
+        -: 1505:      /* no more data to scan (eof) except for maybe a residue -> break */
+        1: 1506:      if (beg == buflim)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -: 1507:        {
+    #####: 1508:          *ineof = true;
+    #####: 1509:          break;
+        -: 1510:        }
+        -: 1511:
+        1: 1512:      zap_nuls (beg, buflim, nul_zapper);
+call    0 returned 100%
+        -: 1513:
+        -: 1514:      /* Determine new residue (the length of an incomplete line at the end of
+        -: 1515:         the buffer, 0 means there is no incomplete last line).  */
+        1: 1516:      oldc = beg[-1];
+        1: 1517:      beg[-1] = eol;
+        -: 1518:      /* FIXME: use rawmemrchr if/when it exists, since we have ensured
+        -: 1519:         that this use of memrchr is guaranteed never to return NULL.  */
+        1: 1520:      lim = memrchr (beg - 1, eol, buflim - beg + 1);
+        1: 1521:      ++lim;
+        1: 1522:      beg[-1] = oldc;
+        1: 1523:      if (lim == beg)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 1524:        lim = beg - residue;
+        1: 1525:      beg -= residue;
+        1: 1526:      residue = buflim - lim;
+        -: 1527:
+        1: 1528:      if (beg < lim)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        -: 1529:        {
+        1: 1530:          if (outleft)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        1: 1531:            nlines += grepbuf (beg, lim);
+call    0 returned 100%
+        1: 1532:          if (pending)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 1533:            prpending (lim);
+call    0 never executed
+        1: 1534:          if ((!outleft && !pending)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+branch  2 never executed
+branch  3 never executed
+        1: 1535:              || (done_on_match && MAX (0, nlines_first_null) < nlines))
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+branch  2 taken 100% (fallthrough)
+branch  3 taken 0%
+        -: 1536:            goto finish_grep;
+        -: 1537:        }
+        -: 1538:
+        -: 1539:      /* The last OUT_BEFORE lines at the end of the buffer will be needed as
+        -: 1540:         leading context if there is a matching line at the begin of the
+        -: 1541:         next data. Make beg point to their begin.  */
+    #####: 1542:      i = 0;
+    #####: 1543:      beg = lim;
+    #####: 1544:      while (i < out_before && beg > bufbeg && beg != lastout)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+        -: 1545:        {
+    #####: 1546:          ++i;
+        -: 1547:          do
+    #####: 1548:            --beg;
+    #####: 1549:          while (beg[-1] != eol);
+branch  0 never executed
+branch  1 never executed
+        -: 1550:        }
+        -: 1551:
+        -: 1552:      /* Detect whether leading context is adjacent to previous output.  */
+    #####: 1553:      if (beg != lastout)
+branch  0 never executed
+branch  1 never executed
+    #####: 1554:        lastout = 0;
+        -: 1555:
+        -: 1556:      /* Handle some details and read more data to scan.  */
+    #####: 1557:      save = residue + lim - beg;
+    #####: 1558:      if (out_byte)
+branch  0 never executed
+branch  1 never executed
+    #####: 1559:        totalcc = add_count (totalcc, buflim - bufbeg - save);
+call    0 never executed
+    #####: 1560:      if (out_line)
+branch  0 never executed
+branch  1 never executed
+    #####: 1561:        nlscan (beg);
+call    0 never executed
+    #####: 1562:      if (! fillbuf (save, st))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+        -: 1563:        {
+    #####: 1564:          suppressible_error (errno);
+call    0 never executed
+    #####: 1565:          goto finish_grep;
+        -: 1566:        }
+        -: 1567:    }
+    #####: 1568:  if (residue)
+branch  0 never executed
+branch  1 never executed
+        -: 1569:    {
+    #####: 1570:      *buflim++ = eol;
+    #####: 1571:      if (outleft)
+branch  0 never executed
+branch  1 never executed
+    #####: 1572:        nlines += grepbuf (bufbeg + save - residue, buflim);
+call    0 never executed
+    #####: 1573:      if (pending)
+branch  0 never executed
+branch  1 never executed
+    #####: 1574:        prpending (buflim);
+call    0 never executed
+        -: 1575:    }
+        -: 1576:
+        2: 1577: finish_grep:
+        1: 1578:  done_on_match = done_on_match_0;
+        1: 1579:  out_quiet = out_quiet_0;
+        1: 1580:  if (!out_quiet && (encoding_error_output
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+branch  2 taken 100% (fallthrough)
+branch  3 taken 0%
+        1: 1581:                     || (0 <= nlines_first_null && nlines_first_null < nlines)))
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+branch  2 taken 100% (fallthrough)
+branch  3 taken 0%
+        -: 1582:    {
+        1: 1583:      printf_errno (_("Binary file %s matches\n"), input_filename ());
+call    0 returned 100%
+call    1 returned 100%
+        1: 1584:      if (line_buffered)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 1585:        fflush_errno ();
+call    0 never executed
+        -: 1586:    }
+        1: 1587:  return nlines;
+        -: 1588:}
+        -: 1589:
+        -: 1590:static bool
+function grepdirent called 0 returned 0% blocks executed 0%
+    #####: 1591:grepdirent (FTS *fts, FTSENT *ent, bool command_line)
+        -: 1592:{
+        -: 1593:  bool follow;
+    #####: 1594:  command_line &= ent->fts_level == FTS_ROOTLEVEL;
+        -: 1595:
+    #####: 1596:  if (ent->fts_info == FTS_DP)
+branch  0 never executed
+branch  1 never executed
+    #####: 1597:    return true;
+        -: 1598:
+    #####: 1599:  if (!command_line
+branch  0 never executed
+branch  1 never executed
+    #####: 1600:      && skipped_file (ent->fts_name, false,
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####: 1601:                       (ent->fts_info == FTS_D || ent->fts_info == FTS_DC
+branch  0 never executed
+branch  1 never executed
+    #####: 1602:                        || ent->fts_info == FTS_DNR)))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -: 1603:    {
+    #####: 1604:      fts_set (fts, ent, FTS_SKIP);
+call    0 never executed
+    #####: 1605:      return true;
+        -: 1606:    }
+        -: 1607:
+    #####: 1608:  filename = ent->fts_path;
+    #####: 1609:  if (omit_dot_slash && filename[1])
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1610:    filename += 2;
+    #####: 1611:  follow = (fts->fts_options & FTS_LOGICAL
+    #####: 1612:            || (fts->fts_options & FTS_COMFOLLOW && command_line));
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+        -: 1613:
+    #####: 1614:  switch (ent->fts_info)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+        -: 1615:    {
+    #####: 1616:    case FTS_D:
+    #####: 1617:      if (directories == RECURSE_DIRECTORIES)
+branch  0 never executed
+branch  1 never executed
+    #####: 1618:        return true;
+    #####: 1619:      fts_set (fts, ent, FTS_SKIP);
+call    0 never executed
+    #####: 1620:      break;
+        -: 1621:
+    #####: 1622:    case FTS_DC:
+    #####: 1623:      if (!suppress_errors)
+branch  0 never executed
+branch  1 never executed
+    #####: 1624:        error (0, 0, _("warning: %s: %s"), filename,
+call    0 never executed
+        -: 1625:               _("recursive directory loop"));
+    #####: 1626:      return true;
+        -: 1627:
+    #####: 1628:    case FTS_DNR:
+        -: 1629:    case FTS_ERR:
+        -: 1630:    case FTS_NS:
+    #####: 1631:      suppressible_error (ent->fts_errno);
+call    0 never executed
+    #####: 1632:      return true;
+        -: 1633:
+    #####: 1634:    case FTS_DEFAULT:
+        -: 1635:    case FTS_NSOK:
+    #####: 1636:      if (skip_devices (command_line))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+        -: 1637:        {
+    #####: 1638:          struct stat *st = ent->fts_statp;
+        -: 1639:          struct stat st1;
+    #####: 1640:          if (! st->st_mode)
+branch  0 never executed
+branch  1 never executed
+        -: 1641:            {
+        -: 1642:              /* The file type is not already known.  Get the file status
+        -: 1643:                 before opening, since opening might have side effects
+        -: 1644:                 on a device.  */
+    #####: 1645:              int flag = follow ? 0 : AT_SYMLINK_NOFOLLOW;
+branch  0 never executed
+branch  1 never executed
+    #####: 1646:              if (fstatat (fts->fts_cwd_fd, ent->fts_accpath, &st1, flag) != 0)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+        -: 1647:                {
+    #####: 1648:                  suppressible_error (errno);
+call    0 never executed
+    #####: 1649:                  return true;
+        -: 1650:                }
+    #####: 1651:              st = &st1;
+        -: 1652:            }
+    #####: 1653:          if (is_device_mode (st->st_mode))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####: 1654:            return true;
+        -: 1655:        }
+    #####: 1656:      break;
+        -: 1657:
+    #####: 1658:    case FTS_F:
+        -: 1659:    case FTS_SLNONE:
+    #####: 1660:      break;
+        -: 1661:
+    #####: 1662:    case FTS_SL:
+        -: 1663:    case FTS_W:
+    #####: 1664:      return true;
+        -: 1665:
+    #####: 1666:    default:
+    #####: 1667:      abort ();
+call    0 never executed
+        -: 1668:    }
+        -: 1669:
+    #####: 1670:  return grepfile (fts->fts_cwd_fd, ent->fts_accpath, follow, command_line);
+call    0 never executed
+        -: 1671:}
+        -: 1672:
+        -: 1673:/* True if errno is ERR after 'open ("symlink", ... O_NOFOLLOW ...)'.
+        -: 1674:   POSIX specifies ELOOP, but it's EMLINK on FreeBSD and EFTYPE on NetBSD.  */
+        -: 1675:static bool
+function open_symlink_nofollow_error called 0 returned 0% blocks executed 0%
+    #####: 1676:open_symlink_nofollow_error (int err)
+        -: 1677:{
+    #####: 1678:  if (err == ELOOP || err == EMLINK)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1679:    return true;
+        -: 1680:#ifdef EFTYPE
+        -: 1681:  if (err == EFTYPE)
+        -: 1682:    return true;
+        -: 1683:#endif
+    #####: 1684:  return false;
+        -: 1685:}
+        -: 1686:
+        -: 1687:static bool
+function grepfile called 0 returned 0% blocks executed 0%
+    #####: 1688:grepfile (int dirdesc, char const *name, bool follow, bool command_line)
+        -: 1689:{
+    #####: 1690:  int oflag = (O_RDONLY | O_NOCTTY
+        -: 1691:               | (IGNORE_DUPLICATE_BRANCH_WARNING
+        -: 1692:                  (binary ? O_BINARY : 0))
+    #####: 1693:               | (follow ? 0 : O_NOFOLLOW)
+branch  0 never executed
+branch  1 never executed
+    #####: 1694:               | (skip_devices (command_line) ? O_NONBLOCK : 0));
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####: 1695:  int desc = openat_safer (dirdesc, name, oflag);
+call    0 never executed
+    #####: 1696:  if (desc < 0)
+branch  0 never executed
+branch  1 never executed
+        -: 1697:    {
+    #####: 1698:      if (follow || ! open_symlink_nofollow_error (errno))
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+branch  3 never executed
+branch  4 never executed
+    #####: 1699:        suppressible_error (errno);
+call    0 never executed
+    #####: 1700:      return true;
+        -: 1701:    }
+    #####: 1702:  return grepdesc (desc, command_line);
+call    0 never executed
+        -: 1703:}
+        -: 1704:
+        -: 1705:/* Read all data from FD, with status ST.  Return true if successful,
+        -: 1706:   false (setting errno) otherwise.  */
+        -: 1707:static bool
+function drain_input called 0 returned 0% blocks executed 0%
+    #####: 1708:drain_input (int fd, struct stat const *st)
+        -: 1709:{
+        -: 1710:  ssize_t nbytes;
+    #####: 1711:  if (S_ISFIFO (st->st_mode) && dev_null_output)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -: 1712:    {
+        -: 1713:#ifdef SPLICE_F_MOVE
+        -: 1714:      /* Should be faster, since it need not copy data to user space.  */
+    #####: 1715:      nbytes = splice (fd, NULL, STDOUT_FILENO, NULL,
+call    0 never executed
+        -: 1716:                       INITIAL_BUFSIZE, SPLICE_F_MOVE);
+    #####: 1717:      if (0 <= nbytes || errno != EINVAL)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -: 1718:        {
+    #####: 1719:          while (0 < nbytes)
+branch  0 never executed
+branch  1 never executed
+    #####: 1720:            nbytes = splice (fd, NULL, STDOUT_FILENO, NULL,
+call    0 never executed
+        -: 1721:                             INITIAL_BUFSIZE, SPLICE_F_MOVE);
+    #####: 1722:          return nbytes == 0;
+        -: 1723:        }
+        -: 1724:#endif
+        -: 1725:    }
+    #####: 1726:  while ((nbytes = safe_read (fd, buffer, bufalloc)))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####: 1727:    if (nbytes == SAFE_READ_ERROR)
+branch  0 never executed
+branch  1 never executed
+    #####: 1728:      return false;
+    #####: 1729:  return true;
+        -: 1730:}
+        -: 1731:
+        -: 1732:/* Finish reading from FD, with status ST and where end-of-file has
+        -: 1733:   been seen if INEOF.  Typically this is a no-op, but when reading
+        -: 1734:   from standard input this may adjust the file offset or drain a
+        -: 1735:   pipe.  */
+        -: 1736:
+        -: 1737:static void
+function finalize_input called 1 returned 100% blocks executed 45%
+        1: 1738:finalize_input (int fd, struct stat const *st, bool ineof)
+        -: 1739:{
+        1: 1740:  if (fd == STDIN_FILENO
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        2: 1741:      && (outleft
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+branch  2 taken 0% (fallthrough)
+branch  3 taken 100%
+        2: 1742:          ? (!ineof
+        1: 1743:             && (seek_failed
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        1: 1744:                 || (lseek (fd, 0, SEEK_END) < 0
+call    0 returned 100%
+branch  1 taken 0% (fallthrough)
+branch  2 taken 100%
+        -: 1745:                     /* Linux proc file system has EINVAL (Bug#25180).  */
+    #####: 1746:                     && errno != EINVAL))
+branch  0 never executed
+branch  1 never executed
+        1: 1747:             && ! drain_input (fd, st))
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+call    2 never executed
+branch  3 never executed
+branch  4 never executed
+    #####: 1748:          : (bufoffset != after_last_match && !seek_failed
+branch  0 never executed
+branch  1 never executed
+    #####: 1749:             && lseek (fd, after_last_match, SEEK_SET) < 0)))
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+branch  3 never executed
+branch  4 never executed
+    #####: 1750:    suppressible_error (errno);
+call    0 never executed
+        1: 1751:}
+        -: 1752:
+        -: 1753:static bool
+function grepdesc called 1 returned 100% blocks executed 24%
+        1: 1754:grepdesc (int desc, bool command_line)
+        -: 1755:{
+        -: 1756:  intmax_t count;
+        1: 1757:  bool status = true;
+        1: 1758:  bool ineof = false;
+        -: 1759:  struct stat st;
+        -: 1760:
+        -: 1761:  /* Get the file status, possibly for the second time.  This catches
+        -: 1762:     a race condition if the directory entry changes after the
+        -: 1763:     directory entry is read and before the file is opened.  For
+        -: 1764:     example, normally DESC is a directory only at the top level, but
+        -: 1765:     there is an exception if some other process substitutes a
+        -: 1766:     directory for a non-directory while 'grep' is running.  */
+        1: 1767:  if (fstat (desc, &st) != 0)
+call    0 returned 100%
+branch  1 taken 0% (fallthrough)
+branch  2 taken 100%
+        -: 1768:    {
+    #####: 1769:      suppressible_error (errno);
+call    0 never executed
+    #####: 1770:      goto closeout;
+        -: 1771:    }
+        -: 1772:
+        1: 1773:  if (desc != STDIN_FILENO && skip_devices (command_line)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+call    2 never executed
+branch  3 never executed
+branch  4 never executed
+    #####: 1774:      && is_device_mode (st.st_mode))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####: 1775:    goto closeout;
+        -: 1776:
+        1: 1777:  if (desc != STDIN_FILENO && command_line
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+branch  2 never executed
+branch  3 never executed
+    #####: 1778:      && skipped_file (filename, true, S_ISDIR (st.st_mode) != 0))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####: 1779:    goto closeout;
+        -: 1780:
+        -: 1781:  /* Don't output file names if invoked as 'grep -r PATTERN NONDIRECTORY'.  */
+        1: 1782:  if (out_file < 0)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 1783:    out_file = !!S_ISDIR (st.st_mode);
+        -: 1784:
+        1: 1785:  if (desc != STDIN_FILENO
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 1786:      && directories == RECURSE_DIRECTORIES && S_ISDIR (st.st_mode))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -: 1787:    {
+        -: 1788:      /* Traverse the directory starting with its full name, because
+        -: 1789:         unfortunately fts provides no way to traverse the directory
+        -: 1790:         starting from its file descriptor.  */
+        -: 1791:
+        -: 1792:      FTS *fts;
+        -: 1793:      FTSENT *ent;
+    #####: 1794:      int opts = fts_options & ~(command_line ? 0 : FTS_COMFOLLOW);
+        -: 1795:      char *fts_arg[2];
+        -: 1796:
+        -: 1797:      /* Close DESC now, to conserve file descriptors if the race
+        -: 1798:         condition occurs many times in a deep recursion.  */
+    #####: 1799:      if (close (desc) != 0)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####: 1800:        suppressible_error (errno);
+call    0 never executed
+        -: 1801:
+    #####: 1802:      fts_arg[0] = (char *) filename;
+    #####: 1803:      fts_arg[1] = NULL;
+    #####: 1804:      fts = fts_open (fts_arg, opts, NULL);
+call    0 never executed
+        -: 1805:
+    #####: 1806:      if (!fts)
+branch  0 never executed
+branch  1 never executed
+    #####: 1807:        xalloc_die ();
+call    0 never executed
+    #####: 1808:      while ((ent = fts_read (fts)))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####: 1809:        status &= grepdirent (fts, ent, command_line);
+call    0 never executed
+    #####: 1810:      if (errno)
+branch  0 never executed
+branch  1 never executed
+    #####: 1811:        suppressible_error (errno);
+call    0 never executed
+    #####: 1812:      if (fts_close (fts) != 0)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####: 1813:        suppressible_error (errno);
+call    0 never executed
+    #####: 1814:      return status;
+        -: 1815:    }
+        1: 1816:  if (desc != STDIN_FILENO
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 1817:      && ((directories == SKIP_DIRECTORIES && S_ISDIR (st.st_mode))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1818:          || ((devices == SKIP_DEVICES
+branch  0 never executed
+branch  1 never executed
+    #####: 1819:               || (devices == READ_COMMAND_LINE_DEVICES && !command_line))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 1820:              && is_device_mode (st.st_mode))))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+        -: 1821:    goto closeout;
+        -: 1822:
+        -: 1823:  /* If there is a regular file on stdout and the current file refers
+        -: 1824:     to the same i-node, we have to report the problem and skip it.
+        -: 1825:     Otherwise when matching lines from some other input reach the
+        -: 1826:     disk before we open this file, we can end up reading and matching
+        -: 1827:     those lines and appending them to the file from which we're reading.
+        -: 1828:     Then we'd have what appears to be an infinite loop that'd terminate
+        -: 1829:     only upon filling the output file system or reaching a quota.
+        -: 1830:     However, there is no risk of an infinite loop if grep is generating
+        -: 1831:     no output, i.e., with --silent, --quiet, -q.
+        -: 1832:     Similarly, with any of these:
+        -: 1833:       --max-count=N (-m) (for N >= 2)
+        -: 1834:       --files-with-matches (-l)
+        -: 1835:       --files-without-match (-L)
+        -: 1836:     there is no risk of trouble.
+        -: 1837:     For --max-count=1, grep stops after printing the first match,
+        -: 1838:     so there is no risk of malfunction.  But even --max-count=2, with
+        -: 1839:     input==output, while there is no risk of infloop, there is a race
+        -: 1840:     condition that could result in "alternate" output.  */
+        1: 1841:  if (!out_quiet && list_files == LISTFILES_NONE && 1 < max_count
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+branch  2 taken 100% (fallthrough)
+branch  3 taken 0%
+branch  4 taken 100% (fallthrough)
+branch  5 taken 0%
+        1: 1842:      && S_ISREG (st.st_mode) && SAME_INODE (st, out_stat))
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+branch  2 taken 0% (fallthrough)
+branch  3 taken 100%
+branch  4 never executed
+branch  5 never executed
+        -: 1843:    {
+    #####: 1844:      if (! suppress_errors)
+branch  0 never executed
+branch  1 never executed
+    #####: 1845:        error (0, 0, _("input file %s is also the output"),
+call    0 never executed
+call    1 never executed
+call    2 never executed
+        -: 1846:               quote (input_filename ()));
+    #####: 1847:      errseen = true;
+    #####: 1848:      goto closeout;
+        -: 1849:    }
+        -: 1850:
+        1: 1851:  count = grep (desc, &st, &ineof);
+call    0 returned 100%
+        1: 1852:  if (count_matches)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -: 1853:    {
+    #####: 1854:      if (out_file)
+branch  0 never executed
+branch  1 never executed
+        -: 1855:        {
+    #####: 1856:          print_filename ();
+call    0 never executed
+    #####: 1857:          if (filename_mask)
+branch  0 never executed
+branch  1 never executed
+    #####: 1858:            print_sep (SEP_CHAR_SELECTED);
+call    0 never executed
+        -: 1859:          else
+    #####: 1860:            putchar_errno (0);
+call    0 never executed
+        -: 1861:        }
+    #####: 1862:      printf_errno ("%" PRIdMAX "\n", count);
+call    0 never executed
+    #####: 1863:      if (line_buffered)
+branch  0 never executed
+branch  1 never executed
+    #####: 1864:        fflush_errno ();
+call    0 never executed
+        -: 1865:    }
+        -: 1866:
+        1: 1867:  status = !count == !(list_files == LISTFILES_NONMATCHING);
+        -: 1868:
+        1: 1869:  if (list_files == LISTFILES_NONE || dev_null_output)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+branch  2 never executed
+branch  3 never executed
+        1: 1870:    finalize_input (desc, &st, ineof);
+call    0 returned 100%
+    #####: 1871:  else if (status == 0)
+branch  0 never executed
+branch  1 never executed
+        -: 1872:    {
+    #####: 1873:      print_filename ();
+call    0 never executed
+    #####: 1874:      putchar_errno ('\n' & filename_mask);
+call    0 never executed
+    #####: 1875:      if (line_buffered)
+branch  0 never executed
+branch  1 never executed
+    #####: 1876:        fflush_errno ();
+call    0 never executed
+        -: 1877:    }
+        -: 1878:
+        1: 1879: closeout:
+        1: 1880:  if (desc != STDIN_FILENO && close (desc) != 0)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+call    2 never executed
+branch  3 never executed
+branch  4 never executed
+    #####: 1881:    suppressible_error (errno);
+call    0 never executed
+        1: 1882:  return status;
+        -: 1883:}
+        -: 1884:
+        -: 1885:static bool
+function grep_command_line_arg called 1 returned 100% blocks executed 67%
+        1: 1886:grep_command_line_arg (char const *arg)
+        -: 1887:{
+        1: 1888:  if (STREQ (arg, "-"))
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        -: 1889:    {
+        1: 1890:      filename = label;
+        1: 1891:      if (binary)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 1892:        xset_binary_mode (STDIN_FILENO, O_BINARY);
+call    0 never executed
+        1: 1893:      return grepdesc (STDIN_FILENO, true);
+call    0 returned 100%
+        -: 1894:    }
+        -: 1895:  else
+        -: 1896:    {
+    #####: 1897:      filename = arg;
+    #####: 1898:      return grepfile (AT_FDCWD, arg, true, true);
+call    0 never executed
+        -: 1899:    }
+        -: 1900:}
+        -: 1901:
+        -: 1902:_Noreturn void usage (int);
+        -: 1903:void
+function usage called 0 returned 0% blocks executed 0%
+    #####: 1904:usage (int status)
+        -: 1905:{
+    #####: 1906:  if (status != 0)
+branch  0 never executed
+branch  1 never executed
+        -: 1907:    {
+    #####: 1908:      fprintf (stderr, _("Usage: %s [OPTION]... PATTERNS [FILE]...\n"),
+call    0 never executed
+        -: 1909:               getprogname ());
+    #####: 1910:      fprintf (stderr, _("Try '%s --help' for more information.\n"),
+call    0 never executed
+        -: 1911:               getprogname ());
+        -: 1912:    }
+        -: 1913:  else
+        -: 1914:    {
+    #####: 1915:      printf (_("Usage: %s [OPTION]... PATTERNS [FILE]...\n"), getprogname ());
+call    0 never executed
+    #####: 1916:      printf (_("Search for PATTERNS in each FILE.\n"));
+call    0 never executed
+    #####: 1917:      printf (_("\
+call    0 never executed
+        -: 1918:Example: %s -i 'hello world' menu.h main.c\n\
+        -: 1919:PATTERNS can contain multiple patterns separated by newlines.\n\
+        -: 1920:\n\
+        -: 1921:Pattern selection and interpretation:\n"), getprogname ());
+    #####: 1922:      printf (_("\
+call    0 never executed
+        -: 1923:  -E, --extended-regexp     PATTERNS are extended regular expressions\n\
+        -: 1924:  -F, --fixed-strings       PATTERNS are strings\n\
+        -: 1925:  -G, --basic-regexp        PATTERNS are basic regular expressions\n\
+        -: 1926:  -P, --perl-regexp         PATTERNS are Perl regular expressions\n"));
+        -: 1927:  /* -X is deliberately undocumented.  */
+    #####: 1928:      printf (_("\
+call    0 never executed
+        -: 1929:  -e, --regexp=PATTERNS     use PATTERNS for matching\n\
+        -: 1930:  -f, --file=FILE           take PATTERNS from FILE\n\
+        -: 1931:  -i, --ignore-case         ignore case distinctions in patterns and data\n\
+        -: 1932:      --no-ignore-case      do not ignore case distinctions (default)\n\
+        -: 1933:  -w, --word-regexp         match only whole words\n\
+        -: 1934:  -x, --line-regexp         match only whole lines\n\
+        -: 1935:  -z, --null-data           a data line ends in 0 byte, not newline\n"));
+    #####: 1936:      printf (_("\
+call    0 never executed
+        -: 1937:\n\
+        -: 1938:Miscellaneous:\n\
+        -: 1939:  -s, --no-messages         suppress error messages\n\
+        -: 1940:  -v, --invert-match        select non-matching lines\n\
+        -: 1941:  -V, --version             display version information and exit\n\
+        -: 1942:      --help                display this help text and exit\n"));
+    #####: 1943:      printf (_("\
+call    0 never executed
+        -: 1944:\n\
+        -: 1945:Output control:\n\
+        -: 1946:  -m, --max-count=NUM       stop after NUM selected lines\n\
+        -: 1947:  -b, --byte-offset         print the byte offset with output lines\n\
+        -: 1948:  -n, --line-number         print line number with output lines\n\
+        -: 1949:      --line-buffered       flush output on every line\n\
+        -: 1950:  -H, --with-filename       print file name with output lines\n\
+        -: 1951:  -h, --no-filename         suppress the file name prefix on output\n\
+        -: 1952:      --label=LABEL         use LABEL as the standard input file name prefix\n\
+        -: 1953:"));
+    #####: 1954:      printf (_("\
+call    0 never executed
+        -: 1955:  -o, --only-matching       show only nonempty parts of lines that match\n\
+        -: 1956:  -q, --quiet, --silent     suppress all normal output\n\
+        -: 1957:      --binary-files=TYPE   assume that binary files are TYPE;\n\
+        -: 1958:                            TYPE is 'binary', 'text', or 'without-match'\n\
+        -: 1959:  -a, --text                equivalent to --binary-files=text\n\
+        -: 1960:"));
+    #####: 1961:      printf (_("\
+call    0 never executed
+        -: 1962:  -I                        equivalent to --binary-files=without-match\n\
+        -: 1963:  -d, --directories=ACTION  how to handle directories;\n\
+        -: 1964:                            ACTION is 'read', 'recurse', or 'skip'\n\
+        -: 1965:  -D, --devices=ACTION      how to handle devices, FIFOs and sockets;\n\
+        -: 1966:                            ACTION is 'read' or 'skip'\n\
+        -: 1967:  -r, --recursive           like --directories=recurse\n\
+        -: 1968:  -R, --dereference-recursive  likewise, but follow all symlinks\n\
+        -: 1969:"));
+    #####: 1970:      printf (_("\
+call    0 never executed
+        -: 1971:      --include=GLOB        search only files that match GLOB (a file pattern)"
+        -: 1972:                "\n\
+        -: 1973:      --exclude=GLOB        skip files that match GLOB\n\
+        -: 1974:      --exclude-from=FILE   skip files that match any file pattern from FILE\n\
+        -: 1975:      --exclude-dir=GLOB    skip directories that match GLOB\n\
+        -: 1976:"));
+    #####: 1977:      printf (_("\
+call    0 never executed
+        -: 1978:  -L, --files-without-match  print only names of FILEs with no selected lines\n\
+        -: 1979:  -l, --files-with-matches  print only names of FILEs with selected lines\n\
+        -: 1980:  -c, --count               print only a count of selected lines per FILE\n\
+        -: 1981:  -T, --initial-tab         make tabs line up (if needed)\n\
+        -: 1982:  -Z, --null                print 0 byte after FILE name\n"));
+    #####: 1983:      printf (_("\
+call    0 never executed
+        -: 1984:\n\
+        -: 1985:Context control:\n\
+        -: 1986:  -B, --before-context=NUM  print NUM lines of leading context\n\
+        -: 1987:  -A, --after-context=NUM   print NUM lines of trailing context\n\
+        -: 1988:  -C, --context=NUM         print NUM lines of output context\n\
+        -: 1989:"));
+    #####: 1990:      printf (_("\
+call    0 never executed
+        -: 1991:  -NUM                      same as --context=NUM\n\
+        -: 1992:      --color[=WHEN],\n\
+        -: 1993:      --colour[=WHEN]       use markers to highlight the matching strings;\n\
+        -: 1994:                            WHEN is 'always', 'never', or 'auto'\n\
+        -: 1995:  -U, --binary              do not strip CR characters at EOL (MSDOS/Windows)\n\
+        -: 1996:\n"));
+    #####: 1997:      printf (_("\
+call    0 never executed
+        -: 1998:When FILE is '-', read standard input.  With no FILE, read '.' if\n\
+        -: 1999:recursive, '-' otherwise.  With fewer than two FILEs, assume -h.\n\
+        -: 2000:Exit status is 0 if any line (or file if -L) is selected, 1 otherwise;\n\
+        -: 2001:if any error occurs and -q is not given, the exit status is 2.\n"));
+    #####: 2002:      emit_bug_reporting_address ();
+call    0 never executed
+        -: 2003:    }
+    #####: 2004:  exit (status);
+        -: 2005:}
+        -: 2006:
+        -: 2007:/* Pattern compilers and matchers.  */
+        -: 2008:
+        -: 2009:static struct
+        -: 2010:{
+        -: 2011:  char name[12];
+        -: 2012:  int syntax; /* used if compile == GEAcompile */
+        -: 2013:  compile_fp_t compile;
+        -: 2014:  execute_fp_t execute;
+        -: 2015:} const matchers[] = {
+        -: 2016:  { "grep", RE_SYNTAX_GREP, GEAcompile, EGexecute },
+        -: 2017:  { "egrep", RE_SYNTAX_EGREP, GEAcompile, EGexecute },
+        -: 2018:  { "fgrep", 0, Fcompile, Fexecute, },
+        -: 2019:  { "awk", RE_SYNTAX_AWK, GEAcompile, EGexecute },
+        -: 2020:  { "gawk", RE_SYNTAX_GNU_AWK, GEAcompile, EGexecute },
+        -: 2021:  { "posixawk", RE_SYNTAX_POSIX_AWK, GEAcompile, EGexecute },
+        -: 2022:#if HAVE_LIBPCRE
+        -: 2023:  { "perl", 0, Pcompile, Pexecute, },
+        -: 2024:#endif
+        -: 2025:};
+        -: 2026:/* Keep these in sync with the 'matchers' table.  */
+        -: 2027:enum { E_MATCHER_INDEX = 1, F_MATCHER_INDEX = 2, G_MATCHER_INDEX = 0 };
+        -: 2028:
+        -: 2029:/* Return the index of the matcher corresponding to M if available.
+        -: 2030:   MATCHER is the index of the previous matcher, or -1 if none.
+        -: 2031:   Exit in case of conflicts or if M is not available.  */
+        -: 2032:static int
+function setmatcher called 0 returned 0% blocks executed 0%
+    #####: 2033:setmatcher (char const *m, int matcher)
+        -: 2034:{
+    #####: 2035:  for (int i = 0; i < sizeof matchers / sizeof *matchers; i++)
+branch  0 never executed
+branch  1 never executed
+    #####: 2036:    if (STREQ (m, matchers[i].name))
+branch  0 never executed
+branch  1 never executed
+        -: 2037:      {
+    #####: 2038:        if (0 <= matcher && matcher != i)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 2039:          die (EXIT_TROUBLE, 0, _("conflicting matchers specified"));
+call    0 never executed
+call    1 never executed
+    #####: 2040:        return i;
+        -: 2041:      }
+        -: 2042:
+        -: 2043:#if !HAVE_LIBPCRE
+        -: 2044:  if (STREQ (m, "perl"))
+        -: 2045:    die (EXIT_TROUBLE, 0,
+        -: 2046:         _("Perl matching not supported in a --disable-perl-regexp build"));
+        -: 2047:#endif
+    #####: 2048:  die (EXIT_TROUBLE, 0, _("invalid matcher %s"), m);
+call    0 never executed
+call    1 never executed
+        -: 2049:}
+        -: 2050:
+        -: 2051:/* Find the white-space-separated options specified by OPTIONS, and
+        -: 2052:   using BUF to store copies of these options, set ARGV[0], ARGV[1],
+        -: 2053:   etc. to the option copies.  Return the number N of options found.
+        -: 2054:   Do not set ARGV[N] to NULL.  If ARGV is NULL, do not store ARGV[0]
+        -: 2055:   etc.  Backslash can be used to escape whitespace (and backslashes).  */
+        -: 2056:static size_t
+function prepend_args called 0 returned 0% blocks executed 0%
+    #####: 2057:prepend_args (char const *options, char *buf, char **argv)
+        -: 2058:{
+    #####: 2059:  char const *o = options;
+    #####: 2060:  char *b = buf;
+    #####: 2061:  size_t n = 0;
+        -: 2062:
+        -: 2063:  for (;;)
+        -: 2064:    {
+    #####: 2065:      while (c_isspace (to_uchar (*o)))
+call    0 never executed
+call    1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 2066:        o++;
+    #####: 2067:      if (!*o)
+branch  0 never executed
+branch  1 never executed
+    #####: 2068:        return n;
+    #####: 2069:      if (argv)
+branch  0 never executed
+branch  1 never executed
+    #####: 2070:        argv[n] = b;
+    #####: 2071:      n++;
+        -: 2072:
+        -: 2073:      do
+    #####: 2074:        if ((*b++ = *o++) == '\\' && *o)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 2075:          b[-1] = *o++;
+    #####: 2076:      while (*o && ! c_isspace (to_uchar (*o)));
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+call    3 never executed
+branch  4 never executed
+branch  5 never executed
+        -: 2077:
+    #####: 2078:      *b++ = '\0';
+        -: 2079:    }
+        -: 2080:}
+        -: 2081:
+        -: 2082:/* Prepend the whitespace-separated options in OPTIONS to the argument
+        -: 2083:   vector of a main program with argument count *PARGC and argument
+        -: 2084:   vector *PARGV.  Return the number of options prepended.  */
+        -: 2085:static int
+function prepend_default_options called 1 returned 100% blocks executed 21%
+        1: 2086:prepend_default_options (char const *options, int *pargc, char ***pargv)
+        -: 2087:{
+        1: 2088:  if (options && *options)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+branch  2 never executed
+branch  3 never executed
+        -: 2089:    {
+    #####: 2090:      char *buf = xmalloc (strlen (options) + 1);
+call    0 never executed
+    #####: 2091:      size_t prepended = prepend_args (options, buf, NULL);
+call    0 never executed
+    #####: 2092:      int argc = *pargc;
+    #####: 2093:      char *const *argv = *pargv;
+        -: 2094:      char **pp;
+        -: 2095:      enum { MAX_ARGS = MIN (INT_MAX, SIZE_MAX / sizeof *pp - 1) };
+    #####: 2096:      if (MAX_ARGS - argc < prepended)
+branch  0 never executed
+branch  1 never executed
+    #####: 2097:        xalloc_die ();
+call    0 never executed
+    #####: 2098:      pp = xmalloc ((prepended + argc + 1) * sizeof *pp);
+call    0 never executed
+    #####: 2099:      *pargc = prepended + argc;
+    #####: 2100:      *pargv = pp;
+    #####: 2101:      *pp++ = *argv++;
+    #####: 2102:      pp += prepend_args (options, buf, pp);
+call    0 never executed
+    #####: 2103:      while ((*pp++ = *argv++))
+branch  0 never executed
+branch  1 never executed
+    #####: 2104:        continue;
+    #####: 2105:      return prepended;
+        -: 2106:    }
+        -: 2107:
+        1: 2108:  return 0;
+        -: 2109:}
+        -: 2110:
+        -: 2111:/* Get the next non-digit option from ARGC and ARGV.
+        -: 2112:   Return -1 if there are no more options.
+        -: 2113:   Process any digit options that were encountered on the way,
+        -: 2114:   and store the resulting integer into *DEFAULT_CONTEXT.  */
+        -: 2115:static int
+function get_nondigit_option called 1 returned 100% blocks executed 50%
+        1: 2116:get_nondigit_option (int argc, char *const *argv, intmax_t *default_context)
+        -: 2117:{
+        -: 2118:  static int prev_digit_optind = -1;
+        -: 2119:  int this_digit_optind;
+        -: 2120:  bool was_digit;
+        -: 2121:  char buf[INT_BUFSIZE_BOUND (intmax_t) + 4];
+        1: 2122:  char *p = buf;
+        -: 2123:  int opt;
+        -: 2124:
+        1: 2125:  was_digit = false;
+        1: 2126:  this_digit_optind = optind;
+        -: 2127:  while (true)
+        -: 2128:    {
+        1: 2129:      opt = getopt_long (argc, (char **) argv, short_options,
+call    0 returned 100%
+        -: 2130:                         long_options, NULL);
+        1: 2131:      if (! c_isdigit (opt))
+call    0 returned 100%
+branch  1 taken 100% (fallthrough)
+branch  2 taken 0%
+        1: 2132:        break;
+        -: 2133:
+    #####: 2134:      if (prev_digit_optind != this_digit_optind || !was_digit)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -: 2135:        {
+        -: 2136:          /* Reset to start another context length argument.  */
+    #####: 2137:          p = buf;
+        -: 2138:        }
+        -: 2139:      else
+        -: 2140:        {
+        -: 2141:          /* Suppress trivial leading zeros, to avoid incorrect
+        -: 2142:             diagnostic on strings like 00000000000.  */
+    #####: 2143:          p -= buf[0] == '0';
+        -: 2144:        }
+        -: 2145:
+    #####: 2146:      if (p == buf + sizeof buf - 4)
+branch  0 never executed
+branch  1 never executed
+        -: 2147:        {
+        -: 2148:          /* Too many digits.  Append "..." to make context_length_arg
+        -: 2149:             complain about "X...", where X contains the digits seen
+        -: 2150:             so far.  */
+    #####: 2151:          strcpy (p, "...");
+    #####: 2152:          p += 3;
+    #####: 2153:          break;
+        -: 2154:        }
+    #####: 2155:      *p++ = opt;
+        -: 2156:
+    #####: 2157:      was_digit = true;
+    #####: 2158:      prev_digit_optind = this_digit_optind;
+    #####: 2159:      this_digit_optind = optind;
+        -: 2160:    }
+        1: 2161:  if (p != buf)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -: 2162:    {
+    #####: 2163:      *p = '\0';
+    #####: 2164:      context_length_arg (buf, default_context);
+call    0 never executed
+        -: 2165:    }
+        -: 2166:
+        1: 2167:  return opt;
+        -: 2168:}
+        -: 2169:
+        -: 2170:/* Parse GREP_COLORS.  The default would look like:
+        -: 2171:     GREP_COLORS='ms=01;31:mc=01;31:sl=:cx=:fn=35:ln=32:bn=32:se=36'
+        -: 2172:   with boolean capabilities (ne and rv) unset (i.e., omitted).
+        -: 2173:   No character escaping is needed or supported.  */
+        -: 2174:static void
+function parse_grep_colors called 0 returned 0% blocks executed 0%
+    #####: 2175:parse_grep_colors (void)
+        -: 2176:{
+        -: 2177:  const char *p;
+        -: 2178:  char *q;
+        -: 2179:  char *name;
+        -: 2180:  char *val;
+        -: 2181:
+    #####: 2182:  p = getenv ("GREP_COLORS"); /* Plural! */
+call    0 never executed
+    #####: 2183:  if (p == NULL || *p == '\0')
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 2184:    return;
+        -: 2185:
+        -: 2186:  /* Work off a writable copy.  */
+    #####: 2187:  q = xstrdup (p);
+call    0 never executed
+        -: 2188:
+    #####: 2189:  name = q;
+    #####: 2190:  val = NULL;
+        -: 2191:  /* From now on, be well-formed or you're gone.  */
+        -: 2192:  for (;;)
+    #####: 2193:    if (*q == ':' || *q == '\0')
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 2194:      {
+    #####: 2195:        char c = *q;
+        -: 2196:        struct color_cap const *cap;
+        -: 2197:
+    #####: 2198:        *q++ = '\0'; /* Terminate name or val.  */
+        -: 2199:        /* Empty name without val (empty cap)
+        -: 2200:         * won't match and will be ignored.  */
+    #####: 2201:        for (cap = color_dict; cap->name; cap++)
+branch  0 never executed
+branch  1 never executed
+    #####: 2202:          if (STREQ (cap->name, name))
+branch  0 never executed
+branch  1 never executed
+    #####: 2203:            break;
+        -: 2204:        /* If name unknown, go on for forward compatibility.  */
+    #####: 2205:        if (cap->var && val)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 2206:          *(cap->var) = val;
+    #####: 2207:        if (cap->fct)
+branch  0 never executed
+branch  1 never executed
+    #####: 2208:          cap->fct ();
+call    0 never executed
+    #####: 2209:        if (c == '\0')
+branch  0 never executed
+branch  1 never executed
+    #####: 2210:          return;
+    #####: 2211:        name = q;
+    #####: 2212:        val = NULL;
+        -: 2213:      }
+    #####: 2214:    else if (*q == '=')
+branch  0 never executed
+branch  1 never executed
+        -: 2215:      {
+    #####: 2216:        if (q == name || val)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 2217:          return;
+    #####: 2218:        *q++ = '\0'; /* Terminate name.  */
+    #####: 2219:        val = q; /* Can be the empty string.  */
+        -: 2220:      }
+    #####: 2221:    else if (val == NULL)
+branch  0 never executed
+branch  1 never executed
+    #####: 2222:      q++; /* Accumulate name.  */
+    #####: 2223:    else if (*q == ';' || c_isdigit (*q))
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+branch  3 never executed
+branch  4 never executed
+    #####: 2224:      q++; /* Accumulate val.  Protect the terminal from being sent crap.  */
+        -: 2225:    else
+    #####: 2226:      return;
+        -: 2227:}
+        -: 2228:
+        -: 2229:/* Return true if PAT (of length PATLEN) contains an encoding error.  */
+        -: 2230:static bool
+function contains_encoding_error called 0 returned 0% blocks executed 0%
+    #####: 2231:contains_encoding_error (char const *pat, size_t patlen)
+        -: 2232:{
+    #####: 2233:  mbstate_t mbs = { 0 };
+        -: 2234:  size_t i, charlen;
+        -: 2235:
+    #####: 2236:  for (i = 0; i < patlen; i += charlen)
+branch  0 never executed
+branch  1 never executed
+        -: 2237:    {
+    #####: 2238:      charlen = mb_clen (pat + i, patlen - i, &mbs);
+call    0 never executed
+    #####: 2239:      if ((size_t) -2 <= charlen)
+branch  0 never executed
+branch  1 never executed
+    #####: 2240:        return true;
+        -: 2241:    }
+    #####: 2242:  return false;
+        -: 2243:}
+        -: 2244:
+        -: 2245:/* Return the number of bytes in the initial character of PAT, of size
+        -: 2246:   PATLEN, if Fcompile can handle that character.  Return -1 if
+        -: 2247:   Fcompile cannot handle it.  MBS is the multibyte conversion state.
+        -: 2248:
+        -: 2249:   Fcompile can handle a character C if C is single-byte, or if C has no
+        -: 2250:   case folded counterparts and toupper translates none of its bytes.  */
+        -: 2251:
+        -: 2252:static int
+function fgrep_icase_charlen called 0 returned 0% blocks executed 0%
+    #####: 2253:fgrep_icase_charlen (char const *pat, size_t patlen, mbstate_t *mbs)
+        -: 2254:{
+    #####: 2255:  int n = localeinfo.sbclen[to_uchar (*pat)];
+call    0 never executed
+    #####: 2256:  if (n < 0)
+branch  0 never executed
+branch  1 never executed
+        -: 2257:    {
+        -: 2258:      wchar_t wc;
+        -: 2259:      wchar_t folded[CASE_FOLDED_BUFSIZE];
+    #####: 2260:      size_t wn = mbrtowc (&wc, pat, patlen, mbs);
+call    0 never executed
+    #####: 2261:      if (MB_LEN_MAX < wn || case_folded_counterparts (wc, folded))
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+branch  3 never executed
+branch  4 never executed
+    #####: 2262:        return -1;
+    #####: 2263:      for (int i = wn; 0 < --i; )
+branch  0 never executed
+branch  1 never executed
+        -: 2264:        {
+    #####: 2265:          unsigned char c = pat[i];
+    #####: 2266:          if (toupper (c) != c)
+branch  0 never executed
+branch  1 never executed
+    #####: 2267:            return -1;
+        -: 2268:        }
+    #####: 2269:      n = wn;
+        -: 2270:    }
+    #####: 2271:  return n;
+        -: 2272:}
+        -: 2273:
+        -: 2274:/* Return true if the -F patterns PAT, of size PATLEN, contain only
+        -: 2275:   single-byte characters or characters not subject to case folding,
+        -: 2276:   and so can be processed by Fcompile.  */
+        -: 2277:
+        -: 2278:static bool
+function fgrep_icase_available called 0 returned 0% blocks executed 0%
+    #####: 2279:fgrep_icase_available (char const *pat, size_t patlen)
+        -: 2280:{
+    #####: 2281:  mbstate_t mbs = {0,};
+        -: 2282:
+    #####: 2283:  for (size_t i = 0; i < patlen; )
+branch  0 never executed
+branch  1 never executed
+        -: 2284:    {
+    #####: 2285:      int n = fgrep_icase_charlen (pat + i, patlen - i, &mbs);
+call    0 never executed
+    #####: 2286:      if (n < 0)
+branch  0 never executed
+branch  1 never executed
+    #####: 2287:        return false;
+    #####: 2288:      i += n;
+        -: 2289:    }
+        -: 2290:
+    #####: 2291:  return true;
+        -: 2292:}
+        -: 2293:
+        -: 2294:/* Change the pattern *KEYS_P, of size *LEN_P, from fgrep to grep style.  */
+        -: 2295:
+        -: 2296:void
+function fgrep_to_grep_pattern called 0 returned 0% blocks executed 0%
+    #####: 2297:fgrep_to_grep_pattern (char **keys_p, size_t *len_p)
+        -: 2298:{
+    #####: 2299:  size_t len = *len_p;
+    #####: 2300:  char *keys = *keys_p;
+    #####: 2301:  mbstate_t mb_state = { 0 };
+    #####: 2302:  char *new_keys = xnmalloc (len + 1, 2);
+call    0 never executed
+    #####: 2303:  char *p = new_keys;
+        -: 2304:  size_t n;
+        -: 2305:
+    #####: 2306:  for (; len; keys += n, len -= n)
+branch  0 never executed
+branch  1 never executed
+        -: 2307:    {
+    #####: 2308:      n = mb_clen (keys, len, &mb_state);
+call    0 never executed
+    #####: 2309:      switch (n)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -: 2310:        {
+    #####: 2311:        case (size_t) -2:
+    #####: 2312:          n = len;
+        -: 2313:          FALLTHROUGH;
+    #####: 2314:        default:
+    #####: 2315:          p = mempcpy (p, keys, n);
+    #####: 2316:          break;
+        -: 2317:
+    #####: 2318:        case (size_t) -1:
+    #####: 2319:          memset (&mb_state, 0, sizeof mb_state);
+    #####: 2320:          n = 1;
+        -: 2321:          FALLTHROUGH;
+    #####: 2322:        case 1:
+    #####: 2323:          switch (*keys)
+branch  0 never executed
+branch  1 never executed
+        -: 2324:            {
+    #####: 2325:            case '$': case '*': case '.': case '[': case '\\': case '^':
+    #####: 2326:              *p++ = '\\'; break;
+        -: 2327:            }
+    #####: 2328:          *p++ = *keys;
+    #####: 2329:          break;
+        -: 2330:        }
+        -: 2331:    }
+        -: 2332:
+    #####: 2333:  free (*keys_p);
+    #####: 2334:  *keys_p = new_keys;
+    #####: 2335:  *len_p = p - new_keys;
+    #####: 2336:}
+        -: 2337:
+        -: 2338:/* If it is easy, convert the MATCHER-style patterns KEYS (of size
+        -: 2339:   *LEN_P) to -F style, update *LEN_P to a possibly-smaller value, and
+        -: 2340:   return F_MATCHER_INDEX.  If not, leave KEYS and *LEN_P alone and
+        -: 2341:   return MATCHER.  This function is conservative and sometimes misses
+        -: 2342:   conversions, e.g., it does not convert the -E pattern "(a|a|[aa])"
+        -: 2343:   to the -F pattern "a".  */
+        -: 2344:
+        -: 2345:static int
+function try_fgrep_pattern called 1 returned 100% blocks executed 47%
+        1: 2346:try_fgrep_pattern (int matcher, char *keys, size_t *len_p)
+        -: 2347:{
+        1: 2348:  int result = matcher;
+        1: 2349:  size_t len = *len_p;
+        1: 2350:  char *new_keys = xmalloc (len + 1);
+call    0 returned 100%
+        1: 2351:  char *p = new_keys;
+        1: 2352:  char const *q = keys;
+        1: 2353:  mbstate_t mb_state = { 0 };
+        -: 2354:
+       12: 2355:  while (len != 0)
+branch  0 taken 91%
+branch  1 taken 9% (fallthrough)
+        -: 2356:    {
+       10: 2357:      switch (*q)
+branch  0 taken 0%
+branch  1 taken 90%
+branch  2 taken 0%
+branch  3 taken 10%
+        -: 2358:        {
+    #####: 2359:        case '$': case '*': case '.': case '[': case '^':
+    #####: 2360:          goto fail;
+        -: 2361:
+        9: 2362:        case '(': case '+': case '?': case '{': case '|':
+        9: 2363:          if (matcher != G_MATCHER_INDEX)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 2364:            goto fail;
+        9: 2365:          break;
+        -: 2366:
+    #####: 2367:        case '\\':
+    #####: 2368:          if (1 < len)
+branch  0 never executed
+branch  1 never executed
+    #####: 2369:            switch (q[1])
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+        -: 2370:              {
+    #####: 2371:              case '\n':
+        -: 2372:              case 'B': case 'S': case 'W': case'\'': case '<':
+        -: 2373:              case 'b': case 's': case 'w': case '`': case '>':
+        -: 2374:              case '1': case '2': case '3': case '4':
+        -: 2375:              case '5': case '6': case '7': case '8': case '9':
+    #####: 2376:                goto fail;
+        -: 2377:
+    #####: 2378:              case '(': case '+': case '?': case '{': case '|':
+    #####: 2379:                if (matcher == G_MATCHER_INDEX)
+branch  0 never executed
+branch  1 never executed
+    #####: 2380:                  goto fail;
+        -: 2381:                FALLTHROUGH;
+        -: 2382:              default:
+    #####: 2383:                q++, len--;
+    #####: 2384:                break;
+        -: 2385:              }
+    #####: 2386:          break;
+        -: 2387:        }
+        -: 2388:
+        -: 2389:      {
+        -: 2390:        size_t n;
+       10: 2391:        if (match_icase)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -: 2392:          {
+    #####: 2393:            int ni = fgrep_icase_charlen (q, len, &mb_state);
+call    0 never executed
+    #####: 2394:            if (ni < 0)
+branch  0 never executed
+branch  1 never executed
+    #####: 2395:              goto fail;
+    #####: 2396:            n = ni;
+        -: 2397:          }
+        -: 2398:        else
+        -: 2399:          {
+       10: 2400:            n = mb_clen (q, len, &mb_state);
+call    0 returned 100%
+       10: 2401:            if (MB_LEN_MAX < n)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 2402:              goto fail;
+        -: 2403:          }
+        -: 2404:
+       10: 2405:        p = mempcpy (p, q, n);
+       10: 2406:        q += n;
+       10: 2407:        len -= n;
+        -: 2408:      }
+        -: 2409:    }
+        -: 2410:
+        1: 2411:  if (*len_p != p - new_keys)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -: 2412:    {
+    #####: 2413:      *len_p = p - new_keys;
+    #####: 2414:      memcpy (keys, new_keys, p - new_keys);
+        -: 2415:    }
+        1: 2416:  result = F_MATCHER_INDEX;
+        -: 2417:
+        1: 2418: fail:
+        1: 2419:  free (new_keys);
+        1: 2420:  return result;
+        -: 2421:}
+        -: 2422:
+        -: 2423:int
+function main called 1 returned 100% blocks executed 22%
+        1: 2424:main (int argc, char **argv)
+        -: 2425:{
+        1: 2426:  char *keys = NULL;
+        1: 2427:  size_t keycc = 0, oldcc, keyalloc = 0;
+        1: 2428:  int matcher = -1;
+        -: 2429:  size_t cc;
+        -: 2430:  int opt, prepended;
+        -: 2431:  int prev_optind, last_recursive;
+        -: 2432:  int fread_errno;
+        -: 2433:  intmax_t default_context;
+        -: 2434:  FILE *fp;
+        1: 2435:  exit_failure = EXIT_TROUBLE;
+        -: 2436:  initialize_main (&argc, &argv);
+        -: 2437:
+        -: 2438:  /* Which command-line options have been specified for filename output.
+        -: 2439:     -1 for -h, 1 for -H, 0 for neither.  */
+        1: 2440:  int filename_option = 0;
+        -: 2441:
+        1: 2442:  eolbyte = '\n';
+        1: 2443:  filename_mask = ~0;
+        -: 2444:
+        1: 2445:  max_count = INTMAX_MAX;
+        -: 2446:
+        -: 2447:  /* The value -1 means to use DEFAULT_CONTEXT. */
+        1: 2448:  out_after = out_before = -1;
+        -: 2449:  /* Default before/after context: changed by -C/-NUM options */
+        1: 2450:  default_context = -1;
+        -: 2451:  /* Changed by -o option */
+        1: 2452:  only_matching = false;
+        -: 2453:
+        -: 2454:  /* Internationalization. */
+        -: 2455:#if defined HAVE_SETLOCALE
+        1: 2456:  setlocale (LC_ALL, "");
+call    0 returned 100%
+        -: 2457:#endif
+        -: 2458:#if defined ENABLE_NLS
+        -: 2459:  bindtextdomain (PACKAGE, LOCALEDIR);
+        -: 2460:  textdomain (PACKAGE);
+        -: 2461:#endif
+        -: 2462:
+        1: 2463:  init_localeinfo (&localeinfo);
+call    0 returned 100%
+        -: 2464:
+        1: 2465:  atexit (clean_up_stdout);
+call    0 returned 100%
+        1: 2466:  c_stack_action (NULL);
+call    0 returned 100%
+        -: 2467:
+        1: 2468:  last_recursive = 0;
+        -: 2469:
+        1: 2470:  prepended = prepend_default_options (getenv ("GREP_OPTIONS"), &argc, &argv);
+call    0 returned 100%
+call    1 returned 100%
+        1: 2471:  if (prepended)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 2472:    error (0, 0, _("warning: GREP_OPTIONS is deprecated;"
+call    0 never executed
+        -: 2473:                   " please use an alias or script"));
+        -: 2474:
+        3: 2475:  while (prev_optind = optind,
+call    0 returned 100%
+branch  1 taken 0%
+branch  2 taken 100% (fallthrough)
+        1: 2476:         (opt = get_nondigit_option (argc, argv, &default_context)) != -1)
+    #####: 2477:    switch (opt)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+branch  7 never executed
+branch  8 never executed
+branch  9 never executed
+branch 10 never executed
+branch 11 never executed
+branch 12 never executed
+branch 13 never executed
+branch 14 never executed
+branch 15 never executed
+branch 16 never executed
+branch 17 never executed
+branch 18 never executed
+branch 19 never executed
+branch 20 never executed
+branch 21 never executed
+branch 22 never executed
+branch 23 never executed
+branch 24 never executed
+branch 25 never executed
+branch 26 never executed
+branch 27 never executed
+branch 28 never executed
+branch 29 never executed
+branch 30 never executed
+branch 31 never executed
+branch 32 never executed
+branch 33 never executed
+branch 34 never executed
+branch 35 never executed
+branch 36 never executed
+branch 37 never executed
+branch 38 never executed
+branch 39 never executed
+branch 40 never executed
+branch 41 never executed
+branch 42 never executed
+branch 43 never executed
+branch 44 never executed
+branch 45 never executed
+branch 46 never executed
+branch 47 never executed
+        -: 2478:      {
+    #####: 2479:      case 'A':
+    #####: 2480:        context_length_arg (optarg, &out_after);
+call    0 never executed
+    #####: 2481:        break;
+        -: 2482:
+    #####: 2483:      case 'B':
+    #####: 2484:        context_length_arg (optarg, &out_before);
+call    0 never executed
+    #####: 2485:        break;
+        -: 2486:
+    #####: 2487:      case 'C':
+        -: 2488:        /* Set output match context, but let any explicit leading or
+        -: 2489:           trailing amount specified with -A or -B stand. */
+    #####: 2490:        context_length_arg (optarg, &default_context);
+call    0 never executed
+    #####: 2491:        break;
+        -: 2492:
+    #####: 2493:      case 'D':
+    #####: 2494:        if (STREQ (optarg, "read"))
+branch  0 never executed
+branch  1 never executed
+    #####: 2495:          devices = READ_DEVICES;
+    #####: 2496:        else if (STREQ (optarg, "skip"))
+branch  0 never executed
+branch  1 never executed
+    #####: 2497:          devices = SKIP_DEVICES;
+        -: 2498:        else
+    #####: 2499:          die (EXIT_TROUBLE, 0, _("unknown devices method"));
+call    0 never executed
+call    1 never executed
+    #####: 2500:        break;
+        -: 2501:
+    #####: 2502:      case 'E':
+    #####: 2503:        matcher = setmatcher ("egrep", matcher);
+call    0 never executed
+    #####: 2504:        break;
+        -: 2505:
+    #####: 2506:      case 'F':
+    #####: 2507:        matcher = setmatcher ("fgrep", matcher);
+call    0 never executed
+    #####: 2508:        break;
+        -: 2509:
+    #####: 2510:      case 'P':
+    #####: 2511:        matcher = setmatcher ("perl", matcher);
+call    0 never executed
+    #####: 2512:        break;
+        -: 2513:
+    #####: 2514:      case 'G':
+    #####: 2515:        matcher = setmatcher ("grep", matcher);
+call    0 never executed
+    #####: 2516:        break;
+        -: 2517:
+    #####: 2518:      case 'X': /* undocumented on purpose */
+    #####: 2519:        matcher = setmatcher (optarg, matcher);
+call    0 never executed
+    #####: 2520:        break;
+        -: 2521:
+    #####: 2522:      case 'H':
+    #####: 2523:        filename_option = 1;
+    #####: 2524:        break;
+        -: 2525:
+    #####: 2526:      case 'I':
+    #####: 2527:        binary_files = WITHOUT_MATCH_BINARY_FILES;
+    #####: 2528:        break;
+        -: 2529:
+    #####: 2530:      case 'T':
+    #####: 2531:        align_tabs = true;
+    #####: 2532:        break;
+        -: 2533:
+    #####: 2534:      case 'U':
+        -: 2535:        if (O_BINARY)
+        -: 2536:          binary = true;
+    #####: 2537:        break;
+        -: 2538:
+    #####: 2539:      case 'u':
+        -: 2540:        /* Obsolete option; it has no effect.  FIXME: Diagnose use of
+        -: 2541:           this option starting in (say) the year 2020.  */
+    #####: 2542:        break;
+        -: 2543:
+    #####: 2544:      case 'V':
+    #####: 2545:        show_version = true;
+    #####: 2546:        break;
+        -: 2547:
+    #####: 2548:      case 'a':
+    #####: 2549:        binary_files = TEXT_BINARY_FILES;
+    #####: 2550:        break;
+        -: 2551:
+    #####: 2552:      case 'b':
+    #####: 2553:        out_byte = true;
+    #####: 2554:        break;
+        -: 2555:
+    #####: 2556:      case 'c':
+    #####: 2557:        count_matches = true;
+    #####: 2558:        break;
+        -: 2559:
+    #####: 2560:      case 'd':
+    #####: 2561:        directories = XARGMATCH ("--directories", optarg,
+call    0 never executed
+        -: 2562:                                 directories_args, directories_types);
+    #####: 2563:        if (directories == RECURSE_DIRECTORIES)
+branch  0 never executed
+branch  1 never executed
+    #####: 2564:          last_recursive = prev_optind;
+    #####: 2565:        break;
+        -: 2566:
+    #####: 2567:      case 'e':
+    #####: 2568:        cc = strlen (optarg);
+    #####: 2569:        if (keyalloc < keycc + cc + 1)
+branch  0 never executed
+branch  1 never executed
+        -: 2570:          {
+    #####: 2571:            keyalloc = keycc + cc + 1;
+    #####: 2572:            keys = x2realloc (keys, &keyalloc);
+call    0 never executed
+        -: 2573:          }
+    #####: 2574:        oldcc = keycc;
+    #####: 2575:        memcpy (keys + oldcc, optarg, cc);
+    #####: 2576:        keycc += cc;
+    #####: 2577:        keys[keycc++] = '\n';
+    #####: 2578:        fl_add (keys + oldcc, cc + 1, "");
+call    0 never executed
+    #####: 2579:        break;
+        -: 2580:
+    #####: 2581:      case 'f':
+    #####: 2582:        if (STREQ (optarg, "-"))
+branch  0 never executed
+branch  1 never executed
+        -: 2583:          {
+    #####: 2584:            if (binary)
+branch  0 never executed
+branch  1 never executed
+    #####: 2585:              xset_binary_mode (STDIN_FILENO, O_BINARY);
+call    0 never executed
+    #####: 2586:            fp = stdin;
+        -: 2587:          }
+        -: 2588:        else
+        -: 2589:          {
+    #####: 2590:            fp = fopen (optarg, binary ? "rb" : "r");
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+    #####: 2591:            if (!fp)
+branch  0 never executed
+branch  1 never executed
+    #####: 2592:              die (EXIT_TROUBLE, errno, "%s", optarg);
+call    0 never executed
+call    1 never executed
+        -: 2593:          }
+    #####: 2594:        oldcc = keycc;
+    #####: 2595:        for (;; keycc += cc)
+        -: 2596:          {
+    #####: 2597:            if (keyalloc <= keycc + 1)
+branch  0 never executed
+branch  1 never executed
+    #####: 2598:              keys = x2realloc (keys, &keyalloc);
+call    0 never executed
+    #####: 2599:            cc = fread (keys + keycc, 1, keyalloc - (keycc + 1), fp);
+call    0 never executed
+    #####: 2600:            if (cc == 0)
+branch  0 never executed
+branch  1 never executed
+    #####: 2601:              break;
+        -: 2602:          }
+    #####: 2603:        fread_errno = errno;
+    #####: 2604:        if (ferror (fp))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####: 2605:          die (EXIT_TROUBLE, fread_errno, "%s", optarg);
+call    0 never executed
+call    1 never executed
+    #####: 2606:        if (fp != stdin)
+branch  0 never executed
+branch  1 never executed
+    #####: 2607:          fclose (fp);
+call    0 never executed
+        -: 2608:        /* Append final newline if file ended in non-newline. */
+    #####: 2609:        if (oldcc != keycc && keys[keycc - 1] != '\n')
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 2610:          keys[keycc++] = '\n';
+    #####: 2611:        fl_add (keys + oldcc, keycc - oldcc, optarg);
+call    0 never executed
+    #####: 2612:        break;
+        -: 2613:
+    #####: 2614:      case 'h':
+    #####: 2615:        filename_option = -1;
+    #####: 2616:        break;
+        -: 2617:
+    #####: 2618:      case 'i':
+        -: 2619:      case 'y':			/* For old-timers . . . */
+    #####: 2620:        match_icase = true;
+    #####: 2621:        break;
+        -: 2622:
+    #####: 2623:      case NO_IGNORE_CASE_OPTION:
+    #####: 2624:        match_icase = false;
+    #####: 2625:        break;
+        -: 2626:
+    #####: 2627:      case 'L':
+        -: 2628:        /* Like -l, except list files that don't contain matches.
+        -: 2629:           Inspired by the same option in Hume's gre. */
+    #####: 2630:        list_files = LISTFILES_NONMATCHING;
+    #####: 2631:        break;
+        -: 2632:
+    #####: 2633:      case 'l':
+    #####: 2634:        list_files = LISTFILES_MATCHING;
+    #####: 2635:        break;
+        -: 2636:
+    #####: 2637:      case 'm':
+    #####: 2638:        switch (xstrtoimax (optarg, 0, 10, &max_count, ""))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+        -: 2639:          {
+    #####: 2640:          case LONGINT_OK:
+        -: 2641:          case LONGINT_OVERFLOW:
+    #####: 2642:            break;
+        -: 2643:
+    #####: 2644:          default:
+    #####: 2645:            die (EXIT_TROUBLE, 0, _("invalid max count"));
+call    0 never executed
+call    1 never executed
+        -: 2646:          }
+    #####: 2647:        break;
+        -: 2648:
+    #####: 2649:      case 'n':
+    #####: 2650:        out_line = true;
+    #####: 2651:        break;
+        -: 2652:
+    #####: 2653:      case 'o':
+    #####: 2654:        only_matching = true;
+    #####: 2655:        break;
+        -: 2656:
+    #####: 2657:      case 'q':
+    #####: 2658:        exit_on_match = true;
+    #####: 2659:        exit_failure = 0;
+    #####: 2660:        break;
+        -: 2661:
+    #####: 2662:      case 'R':
+    #####: 2663:        fts_options = basic_fts_options | FTS_LOGICAL;
+        -: 2664:        FALLTHROUGH;
+    #####: 2665:      case 'r':
+    #####: 2666:        directories = RECURSE_DIRECTORIES;
+    #####: 2667:        last_recursive = prev_optind;
+    #####: 2668:        break;
+        -: 2669:
+    #####: 2670:      case 's':
+    #####: 2671:        suppress_errors = true;
+    #####: 2672:        break;
+        -: 2673:
+    #####: 2674:      case 'v':
+    #####: 2675:        out_invert = true;
+    #####: 2676:        break;
+        -: 2677:
+    #####: 2678:      case 'w':
+    #####: 2679:        wordinit ();
+call    0 never executed
+    #####: 2680:        match_words = true;
+    #####: 2681:        break;
+        -: 2682:
+    #####: 2683:      case 'x':
+    #####: 2684:        match_lines = true;
+    #####: 2685:        break;
+        -: 2686:
+    #####: 2687:      case 'Z':
+    #####: 2688:        filename_mask = 0;
+    #####: 2689:        break;
+        -: 2690:
+    #####: 2691:      case 'z':
+    #####: 2692:        eolbyte = '\0';
+    #####: 2693:        break;
+        -: 2694:
+    #####: 2695:      case BINARY_FILES_OPTION:
+    #####: 2696:        if (STREQ (optarg, "binary"))
+branch  0 never executed
+branch  1 never executed
+    #####: 2697:          binary_files = BINARY_BINARY_FILES;
+    #####: 2698:        else if (STREQ (optarg, "text"))
+branch  0 never executed
+branch  1 never executed
+    #####: 2699:          binary_files = TEXT_BINARY_FILES;
+    #####: 2700:        else if (STREQ (optarg, "without-match"))
+branch  0 never executed
+branch  1 never executed
+    #####: 2701:          binary_files = WITHOUT_MATCH_BINARY_FILES;
+        -: 2702:        else
+    #####: 2703:          die (EXIT_TROUBLE, 0, _("unknown binary-files type"));
+call    0 never executed
+call    1 never executed
+    #####: 2704:        break;
+        -: 2705:
+    #####: 2706:      case COLOR_OPTION:
+    #####: 2707:        if (optarg)
+branch  0 never executed
+branch  1 never executed
+        -: 2708:          {
+    #####: 2709:            if (!c_strcasecmp (optarg, "always")
+branch  0 never executed
+branch  1 never executed
+    #####: 2710:                || !c_strcasecmp (optarg, "yes")
+branch  0 never executed
+branch  1 never executed
+    #####: 2711:                || !c_strcasecmp (optarg, "force"))
+branch  0 never executed
+branch  1 never executed
+    #####: 2712:              color_option = 1;
+    #####: 2713:            else if (!c_strcasecmp (optarg, "never")
+branch  0 never executed
+branch  1 never executed
+    #####: 2714:                     || !c_strcasecmp (optarg, "no")
+branch  0 never executed
+branch  1 never executed
+    #####: 2715:                     || !c_strcasecmp (optarg, "none"))
+branch  0 never executed
+branch  1 never executed
+    #####: 2716:              color_option = 0;
+    #####: 2717:            else if (!c_strcasecmp (optarg, "auto")
+branch  0 never executed
+branch  1 never executed
+    #####: 2718:                     || !c_strcasecmp (optarg, "tty")
+branch  0 never executed
+branch  1 never executed
+    #####: 2719:                     || !c_strcasecmp (optarg, "if-tty"))
+branch  0 never executed
+branch  1 never executed
+    #####: 2720:              color_option = 2;
+        -: 2721:            else
+    #####: 2722:              show_help = 1;
+        -: 2723:          }
+        -: 2724:        else
+    #####: 2725:          color_option = 2;
+    #####: 2726:        break;
+        -: 2727:
+    #####: 2728:      case EXCLUDE_OPTION:
+        -: 2729:      case INCLUDE_OPTION:
+    #####: 2730:        for (int cmd = 0; cmd < 2; cmd++)
+branch  0 never executed
+branch  1 never executed
+        -: 2731:          {
+    #####: 2732:            if (!excluded_patterns[cmd])
+branch  0 never executed
+branch  1 never executed
+    #####: 2733:              excluded_patterns[cmd] = new_exclude ();
+call    0 never executed
+    #####: 2734:            add_exclude (excluded_patterns[cmd], optarg,
+call    0 never executed
+    #####: 2735:                         ((opt == INCLUDE_OPTION ? EXCLUDE_INCLUDE : 0)
+branch  0 never executed
+branch  1 never executed
+    #####: 2736:                          | exclude_options (cmd)));
+call    0 never executed
+        -: 2737:          }
+    #####: 2738:        break;
+    #####: 2739:      case EXCLUDE_FROM_OPTION:
+    #####: 2740:        for (int cmd = 0; cmd < 2; cmd++)
+branch  0 never executed
+branch  1 never executed
+        -: 2741:          {
+    #####: 2742:            if (!excluded_patterns[cmd])
+branch  0 never executed
+branch  1 never executed
+    #####: 2743:              excluded_patterns[cmd] = new_exclude ();
+call    0 never executed
+    #####: 2744:            if (add_exclude_file (add_exclude, excluded_patterns[cmd],
+call    0 never executed
+call    1 never executed
+branch  2 never executed
+branch  3 never executed
+        -: 2745:                                  optarg, exclude_options (cmd), '\n')
+        -: 2746:                != 0)
+    #####: 2747:              die (EXIT_TROUBLE, errno, "%s", optarg);
+call    0 never executed
+call    1 never executed
+        -: 2748:          }
+    #####: 2749:        break;
+        -: 2750:
+    #####: 2751:      case EXCLUDE_DIRECTORY_OPTION:
+    #####: 2752:        strip_trailing_slashes (optarg);
+call    0 never executed
+    #####: 2753:        for (int cmd = 0; cmd < 2; cmd++)
+branch  0 never executed
+branch  1 never executed
+        -: 2754:          {
+    #####: 2755:            if (!excluded_directory_patterns[cmd])
+branch  0 never executed
+branch  1 never executed
+    #####: 2756:              excluded_directory_patterns[cmd] = new_exclude ();
+call    0 never executed
+    #####: 2757:            add_exclude (excluded_directory_patterns[cmd], optarg,
+call    0 never executed
+call    1 never executed
+        -: 2758:                         exclude_options (cmd));
+        -: 2759:          }
+    #####: 2760:        break;
+        -: 2761:
+    #####: 2762:      case GROUP_SEPARATOR_OPTION:
+    #####: 2763:        group_separator = optarg;
+    #####: 2764:        break;
+        -: 2765:
+    #####: 2766:      case LINE_BUFFERED_OPTION:
+    #####: 2767:        line_buffered = true;
+    #####: 2768:        break;
+        -: 2769:
+    #####: 2770:      case LABEL_OPTION:
+    #####: 2771:        label = optarg;
+    #####: 2772:        break;
+        -: 2773:
+    #####: 2774:      case 0:
+        -: 2775:        /* long options */
+    #####: 2776:        break;
+        -: 2777:
+    #####: 2778:      default:
+    #####: 2779:        usage (EXIT_TROUBLE);
+call    0 never executed
+        -: 2780:        break;
+        -: 2781:
+        -: 2782:      }
+        -: 2783:
+        1: 2784:  if (show_version)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -: 2785:    {
+    #####: 2786:      version_etc (stdout, getprogname (), PACKAGE_NAME, VERSION,
+call    0 never executed
+        -: 2787:                   (char *) NULL);
+    #####: 2788:      puts (_("Written by Mike Haertel and others; see\n"
+call    0 never executed
+        -: 2789:              "<https://git.sv.gnu.org/cgit/grep.git/tree/AUTHORS>."));
+    #####: 2790:      return EXIT_SUCCESS;
+        -: 2791:    }
+        -: 2792:
+        1: 2793:  if (show_help)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 2794:    usage (EXIT_SUCCESS);
+call    0 never executed
+        -: 2795:
+        1: 2796:  if (keys)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -: 2797:    {
+    #####: 2798:      if (keycc == 0)
+branch  0 never executed
+branch  1 never executed
+        -: 2799:        {
+        -: 2800:          /* No keys were specified (e.g. -f /dev/null).  Match nothing.  */
+    #####: 2801:          out_invert ^= true;
+    #####: 2802:          match_lines = match_words = false;
+        -: 2803:        }
+        -: 2804:      else
+        -: 2805:        /* Strip trailing newline. */
+    #####: 2806:        --keycc;
+        -: 2807:    }
+        1: 2808:  else if (optind < argc)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        -: 2809:    {
+        -: 2810:      /* Make a copy so that it can be reallocated or freed later.  */
+        1: 2811:      keycc = strlen (argv[optind]);
+        1: 2812:      keys = xmemdup (argv[optind++], keycc + 1);
+call    0 returned 100%
+        1: 2813:      fl_add (keys, keycc, "");
+call    0 returned 100%
+        1: 2814:      n_patterns++;
+        -: 2815:    }
+        -: 2816:  else
+    #####: 2817:    usage (EXIT_TROUBLE);
+call    0 never executed
+        -: 2818:
+        1: 2819:  bool possibly_tty = false;
+        -: 2820:  struct stat tmp_stat;
+        1: 2821:  if (! exit_on_match && fstat (STDOUT_FILENO, &tmp_stat) == 0)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+call    2 returned 100%
+branch  3 taken 100% (fallthrough)
+branch  4 taken 0%
+        -: 2822:    {
+        1: 2823:      if (S_ISREG (tmp_stat.st_mode))
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 2824:        out_stat = tmp_stat;
+        1: 2825:      else if (S_ISCHR (tmp_stat.st_mode))
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -: 2826:        {
+        -: 2827:          struct stat null_stat;
+    #####: 2828:          if (stat ("/dev/null", &null_stat) == 0
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####: 2829:              && SAME_INODE (tmp_stat, null_stat))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 2830:            dev_null_output = true;
+        -: 2831:          else
+    #####: 2832:            possibly_tty = true;
+        -: 2833:        }
+        -: 2834:    }
+        -: 2835:
+        -: 2836:  /* POSIX says -c, -l and -q are mutually exclusive.  In this
+        -: 2837:     implementation, -q overrides -l and -L, which in turn override -c.  */
+        1: 2838:  if (exit_on_match)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 2839:    list_files = LISTFILES_NONE;
+        1: 2840:  if ((exit_on_match | dev_null_output) || list_files != LISTFILES_NONE)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+branch  2 taken 0% (fallthrough)
+branch  3 taken 100%
+        -: 2841:    {
+    #####: 2842:      count_matches = false;
+    #####: 2843:      done_on_match = true;
+        -: 2844:    }
+        1: 2845:  out_quiet = count_matches | done_on_match;
+        -: 2846:
+        1: 2847:  if (out_after < 0)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        1: 2848:    out_after = default_context;
+        1: 2849:  if (out_before < 0)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        1: 2850:    out_before = default_context;
+        -: 2851:
+        -: 2852:  /* If it is easy to see that matching cannot succeed (e.g., 'grep -f
+        -: 2853:     /dev/null'), fail without reading the input.  */
+        1: 2854:  if ((max_count == 0
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        1: 2855:       || (keycc == 0 && out_invert && !match_lines && !match_words))
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+branch  7 never executed
+    #####: 2856:      && list_files != LISTFILES_NONMATCHING)
+branch  0 never executed
+branch  1 never executed
+    #####: 2857:    return EXIT_FAILURE;
+        -: 2858:
+        1: 2859:  if (color_option == 2)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 2860:    color_option = possibly_tty && should_colorize () && isatty (STDOUT_FILENO);
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+branch  3 never executed
+branch  4 never executed
+call    5 never executed
+branch  6 never executed
+branch  7 never executed
+        1: 2861:  init_colorize ();
+call    0 returned 100%
+        -: 2862:
+        1: 2863:  if (color_option)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -: 2864:    {
+        -: 2865:      /* Legacy.  */
+    #####: 2866:      char *userval = getenv ("GREP_COLOR");
+call    0 never executed
+    #####: 2867:      if (userval != NULL && *userval != '\0')
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 2868:        selected_match_color = context_match_color = userval;
+        -: 2869:
+        -: 2870:      /* New GREP_COLORS has priority.  */
+    #####: 2871:      parse_grep_colors ();
+call    0 never executed
+        -: 2872:    }
+        -: 2873:
+        1: 2874:  initialize_unibyte_mask ();
+call    0 returned 100%
+        -: 2875:
+        1: 2876:  if (matcher < 0)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        1: 2877:    matcher = G_MATCHER_INDEX;
+        -: 2878:
+        -: 2879:  /* In a single-byte locale, switch from -F to -G if it is a single
+        -: 2880:     pattern that matches words, where -G is typically faster.  In a
+        -: 2881:     multi-byte locale, switch if the patterns have an encoding error
+        -: 2882:     (where -F does not work) or if -i and the patterns will not work
+        -: 2883:     for -iF.  */
+        1: 2884:  if (matcher == F_MATCHER_INDEX
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+branch  2 never executed
+branch  3 never executed
+    #####: 2885:      && (! localeinfo.multibyte
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 2886:          ? n_patterns == 1 && match_words
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####: 2887:          : (contains_encoding_error (keys, keycc)
+call    0 never executed
+    #####: 2888:             || (match_icase && !fgrep_icase_available (keys, keycc)))))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+call    4 never executed
+branch  5 never executed
+branch  6 never executed
+        -: 2889:    {
+    #####: 2890:      fgrep_to_grep_pattern (&keys, &keycc);
+call    0 never executed
+    #####: 2891:      matcher = G_MATCHER_INDEX;
+        -: 2892:    }
+        -: 2893:  /* With two or more patterns, if -F works then switch from either -E
+        -: 2894:     or -G, as -F is probably faster then.  */
+        1: 2895:  else if ((matcher == G_MATCHER_INDEX || matcher == E_MATCHER_INDEX)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+branch  2 never executed
+branch  3 never executed
+        1: 2896:           && 1 < n_patterns)
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        1: 2897:    matcher = try_fgrep_pattern (matcher, keys, &keycc);
+call    0 returned 100%
+        -: 2898:
+        1: 2899:  execute = matchers[matcher].execute;
+        2: 2900:  compiled_pattern = matchers[matcher].compile (keys, keycc,
+call    0 returned 100%
+        1: 2901:                                                matchers[matcher].syntax);
+        -: 2902:  /* We need one byte prior and one after.  */
+        1: 2903:  char eolbytes[3] = { 0, eolbyte, 0 };
+        -: 2904:  size_t match_size;
+        2: 2905:  skip_empty_lines = ((execute (compiled_pattern, eolbytes + 1, 1,
+call    0 returned 100%
+        1: 2906:                                &match_size, NULL) == 0)
+        1: 2907:                      == out_invert);
+        -: 2908:
+        1: 2909:  int num_operands = argc - optind;
+        2: 2910:  out_file = (filename_option == 0 && num_operands <= 1
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        1: 2911:              ? - (directories == RECURSE_DIRECTORIES)
+        2: 2912:              : 0 <= filename_option);
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+        -: 2913:
+        1: 2914:  if (binary)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####: 2915:    xset_binary_mode (STDOUT_FILENO, O_BINARY);
+call    0 never executed
+        -: 2916:
+        -: 2917:  /* Prefer sysconf for page size, as getpagesize typically returns int.  */
+        -: 2918:#ifdef _SC_PAGESIZE
+        1: 2919:  long psize = sysconf (_SC_PAGESIZE);
+call    0 returned 100%
+        -: 2920:#else
+        -: 2921:  long psize = getpagesize ();
+        -: 2922:#endif
+        1: 2923:  if (! (0 < psize && psize <= (SIZE_MAX - sizeof (uword)) / 2))
+branch  0 taken 100% (fallthrough)
+branch  1 taken 0%
+branch  2 taken 0% (fallthrough)
+branch  3 taken 100%
+    #####: 2924:    abort ();
+call    0 never executed
+        1: 2925:  pagesize = psize;
+        1: 2926:  bufalloc = ALIGN_TO (INITIAL_BUFSIZE, pagesize) + pagesize + sizeof (uword);
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        1: 2927:  buffer = xmalloc (bufalloc);
+call    0 returned 100%
+        -: 2928:
+        1: 2929:  if (fts_options & FTS_LOGICAL && devices == READ_COMMAND_LINE_DEVICES)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+branch  2 never executed
+branch  3 never executed
+    #####: 2930:    devices = READ_DEVICES;
+        -: 2931:
+        -: 2932:  char *const *files;
+        1: 2933:  if (0 < num_operands)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -: 2934:    {
+    #####: 2935:      files = argv + optind;
+        -: 2936:    }
+        1: 2937:  else if (directories == RECURSE_DIRECTORIES && prepended < last_recursive)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+branch  2 never executed
+branch  3 never executed
+    #####: 2938:    {
+        -: 2939:      static char *const cwd_only[] = { (char *) ".", NULL };
+    #####: 2940:      files = cwd_only;
+    #####: 2941:      omit_dot_slash = true;
+        -: 2942:    }
+        -: 2943:  else
+        -: 2944:    {
+        -: 2945:      static char *const stdin_only[] = { (char *) "-", NULL };
+        1: 2946:      files = stdin_only;
+        -: 2947:    }
+        -: 2948:
+        1: 2949:  bool status = true;
+        -: 2950:  do
+        1: 2951:    status &= grep_command_line_arg (*files++);
+call    0 returned 100%
+        1: 2952:  while (*files != NULL);
+branch  0 taken 0%
+branch  1 taken 100% (fallthrough)
+        -: 2953:
+        -: 2954:  /* We register via atexit to test stdout.  */
+        1: 2955:  return errseen ? EXIT_TROUBLE : status;
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        -: 2956:}

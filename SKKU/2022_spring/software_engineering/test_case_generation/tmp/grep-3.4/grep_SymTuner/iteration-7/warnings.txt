@@ -1,0 +1,28 @@
+KLEE: WARNING: undefined reference to function: __ctype_get_mb_cur_max
+KLEE: WARNING: undefined reference to function: fdopendir
+KLEE: WARNING: undefined reference to function: pcre_assign_jit_stack
+KLEE: WARNING: undefined reference to function: pcre_compile
+KLEE: WARNING: undefined reference to function: pcre_exec
+KLEE: WARNING: undefined reference to function: pcre_fullinfo
+KLEE: WARNING: undefined reference to function: pcre_jit_stack_alloc
+KLEE: WARNING: undefined reference to function: pcre_jit_stack_free
+KLEE: WARNING: undefined reference to function: pcre_maketables
+KLEE: WARNING: undefined reference to function: pcre_study
+KLEE: WARNING: undefined reference to function: sigaltstack
+KLEE: WARNING: undefined reference to function: splice
+KLEE: WARNING: executable has module level assembly (ignoring)
+KLEE: WARNING ONCE: calling external: syscall(16, 0, 21505, 94871850742512) at /opt/klee-src/runtime/POSIX/fd.c:980 10
+KLEE: WARNING ONCE: calling __user_main with extra arguments.
+KLEE: WARNING ONCE: Alignment of memory from call "malloc" is not modelled. Using alignment of 8.
+KLEE: WARNING: seeds patched for violating constraint
+KLEE: WARNING ONCE: Alignment of memory from call "calloc" is not modelled. Using alignment of 8.
+KLEE: WARNING ONCE: calling external: __ctype_get_mb_cur_max() at ../../lib/localeinfo.c:91 38
+KLEE: WARNING ONCE: Alignment of memory from call "realloc" is not modelled. Using alignment of 8.
+KLEE: WARNING ONCE: calling external: sigaltstack(94871851707456, 0) at ../../lib/c-stack.c:299 5
+KLEE: WARNING ONCE: sigaction: silently ignoring
+KLEE: WARNING ONCE: silently concretizing (reason: max-sym-array-size) expression (Add w64 8
+          (ReadLSB w64 96 U0:[(Extract w32 0 (Add w64 120
+                                                      (ZExt w64 (Extract w8 0 (ZExt w32 (Extract w8 0 (SExt w32 (Extract w8 0 (ZExt w32 (Extract w8 0 (SExt w32 (Extract w8 0 (SExt w64 (ZExt w32 (Read w8 1 arg00)))))))))))))))=0] @ const_arr4)) to value 94871858204696 (../../src/kwset.c:489)
+KLEE: WARNING ONCE: calling external: getpagesize() at libc/unistd/sysconf.c:241 14
+KLEE: WARNING ONCE: calling external: vprintf(94871828928576, 94871862775360) at libc/stdio/fprintf.c:35 14
+KLEE: WARNING ONCE: calling clean_up_stdout with extra arguments.

@@ -1,0 +1,136 @@
+array A-data[16] : w32 -> w8 = symbolic
+array A-data-stat[144] : w32 -> w8 = symbolic
+array arg00[11] : w32 -> w8 = symbolic
+array arg01[9] : w32 -> w8 = symbolic
+array arg02[11] : w32 -> w8 = symbolic
+array model_version[4] : w32 -> w8 = symbolic
+array stdin-stat[144] : w32 -> w8 = symbolic
+(query [(Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 2 arg00))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 3 arg00))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 4 arg00))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 5 arg00))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 6 arg00))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 7 arg00))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 8 arg00))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 9 arg00))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 1 arg01))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 2 arg01))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 3 arg01))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 4 arg01))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 5 arg01))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 6 arg01))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 7 arg01))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 2 arg02))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 3 arg02))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 4 arg02))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 5 arg02))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 6 arg02))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 7 arg02))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 8 arg02))))
+         (Eq false
+             (Sle 32
+                  (SExt w32 (Read w8 9 arg02))))
+         (Eq false
+             (Eq 0
+                 (And w64 (ReadLSB w64 8 A-data-stat)
+                          2147483647)))
+         (Eq 0
+             (And w64 (ReadLSB w64 56 A-data-stat)
+                      18446744073709486080))
+         (Eq false
+             (Eq 0
+                 (And w64 (ReadLSB w64 8 stdin-stat)
+                          2147483647)))
+         (Eq 0
+             (And w64 (ReadLSB w64 56 stdin-stat)
+                      18446744073709486080))
+         (Eq 1
+             (ReadLSB w32 0 model_version))
+         (Eq 0 (Read w8 1 arg00))
+         (Eq 10 (Read w8 0 arg00))
+         (Eq 0 (Read w8 0 arg01))
+         (Eq 0 (Read w8 1 arg02))
+         (Eq 65 (Read w8 0 arg02))
+         (Extract 0 (ZExt w8 (Eq 16384
+                                 (And w32 (And w32 (ReadLSB w32 24 A-data-stat)
+                                                   4294966784)
+                                          61440))))
+         (Eq false
+             (Eq 0 N0:(Read w8 4 A-data)))
+         (Eq false
+             (Eq 0 N1:(Read w8 6 A-data)))
+         (Eq false
+             (Eq 0 N2:(Read w8 8 A-data)))
+         (Eq 10 (Read w8 15 A-data))
+         (Eq 10 (Read w8 0 A-data))
+         (Eq 10 (Read w8 1 A-data))
+         (Eq 10 (Read w8 2 A-data))
+         (Eq 10 (Read w8 3 A-data))
+         (Eq false (Eq 10 N0))
+         (Eq 10 (Read w8 5 A-data))
+         (Eq false
+             (Eq 0
+                 (And w64 (ZExt w64 N0) 9259542123273814144)))
+         (Slt (ZExt w32 (Extract w8 0 (Add w32 4294967104 (SExt w32 N0))))
+              62)
+         (Eq false (Eq 10 N1))
+         (Eq 10 (Read w8 7 A-data))
+         (Eq false
+             (Eq 0
+                 (And w64 (ZExt w64 N1) 9259542123273814144)))
+         (Slt (ZExt w32 (Extract w8 0 (Add w32 4294967104 (SExt w32 N1))))
+              62)
+         (Eq false (Eq 10 N2))
+         (Eq 10 (Read w8 9 A-data))
+         (Eq 0
+             (And w64 (ZExt w64 N2) 9259542123273814144))
+         (Eq 10 (Read w8 10 A-data))
+         (Eq 10 (Read w8 11 A-data))
+         (Eq 10 (Read w8 12 A-data))
+         (Eq 10 (Read w8 13 A-data))
+         (Eq 10 (Read w8 14 A-data))]
+        false)

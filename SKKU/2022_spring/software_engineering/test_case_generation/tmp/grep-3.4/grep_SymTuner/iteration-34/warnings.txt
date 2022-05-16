@@ -1,0 +1,37 @@
+KLEE: WARNING: undefined reference to function: __ctype_get_mb_cur_max
+KLEE: WARNING: undefined reference to function: fdopendir
+KLEE: WARNING: undefined reference to function: pcre_assign_jit_stack
+KLEE: WARNING: undefined reference to function: pcre_compile
+KLEE: WARNING: undefined reference to function: pcre_exec
+KLEE: WARNING: undefined reference to function: pcre_fullinfo
+KLEE: WARNING: undefined reference to function: pcre_jit_stack_alloc
+KLEE: WARNING: undefined reference to function: pcre_jit_stack_free
+KLEE: WARNING: undefined reference to function: pcre_maketables
+KLEE: WARNING: undefined reference to function: pcre_study
+KLEE: WARNING: undefined reference to function: sigaltstack
+KLEE: WARNING: undefined reference to function: splice
+KLEE: WARNING: executable has module level assembly (ignoring)
+KLEE: WARNING ONCE: calling external: syscall(16, 0, 21505, 93940998245040) at /opt/klee-src/runtime/POSIX/fd.c:980 10
+KLEE: WARNING ONCE: calling __user_main with extra arguments.
+KLEE: WARNING ONCE: Alignment of memory from call "malloc" is not modelled. Using alignment of 8.
+KLEE: WARNING: seeds patched for violating constraint
+KLEE: WARNING ONCE: Alignment of memory from call "calloc" is not modelled. Using alignment of 8.
+KLEE: WARNING ONCE: calling external: __ctype_get_mb_cur_max() at ../../lib/localeinfo.c:91 38
+KLEE: WARNING ONCE: Alignment of memory from call "realloc" is not modelled. Using alignment of 8.
+KLEE: WARNING ONCE: calling external: sigaltstack(93940998278816, 0) at ../../lib/c-stack.c:286 7
+KLEE: WARNING ONCE: sigaction: silently ignoring
+KLEE: WARNING ONCE: calling external: getpagesize() at libc/unistd/sysconf.c:241 14
+KLEE: WARNING ONCE: calling external: vprintf(93940997696672, 93941000680704) at libc/stdio/fprintf.c:35 14
+KLEE: WARNING ONCE: calling clean_up_stdout with extra arguments.
+KLEE: WARNING ONCE: silently concretizing (reason: max-sym-array-size) expression (Add w64 93940980985856
+          (Select w64 (Eq 18446744073709551615
+                          N0:(Select w64 (Ult N1:(ZExt w64 (ReadLSB w32 N2:(Extract w32 0 (Add w64 18446650132711272512
+                                                                                                   (Select w64 (Eq 0
+                                                                                                                   (ReadLSB w64 8 A-data-stat))
+                                                                                                               0
+                                                                                                               93940998279104))) const_arr3))
+                                              98304)
+                                         N1
+                                         98304))
+                      0
+                      N0)) to value 93940980985864 (../../src/grep.c:986)

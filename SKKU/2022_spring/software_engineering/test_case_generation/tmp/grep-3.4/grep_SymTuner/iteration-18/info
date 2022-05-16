@@ -1,0 +1,21 @@
+klee -output-module=false -output-source=false -output-stats=false -use-batching-search -posix-runtime -only-output-states-covering-new -watchdog -allow-seed-extension -allow-seed-truncation -ignore-solver-failures -libc=uclibc -disable-inlining -simplify-sym-indices=true -use-forked-solver=true -use-cex-cache=true -max-memory-inhibit=false -optimize=false -max-memory=2500 -max-sym-array-size=4500 -max-instruction-time=50 -max-static-fork-pct=1 -max-static-solve-pct=2 -max-static-cpfork-pct=4 -batch-instructions=14000 -seed-file=/workspaces/grep_SymTuner/iteration-14/test000034.ktest -search=dfs -switch-type=simple -external-calls=concrete -max-time=30 -output-dir=/workspaces/grep_SymTuner/iteration-18 /workspaces/grep-3.4/obj-llvm/src/grep.bc -sym-arg 7 -sym-arg 4 -sym-files 1 20 -sym-stdin 4 -sym-stdout
+PID: 27690
+Using monotonic steady clock with 1/1000000000s resolution
+Started: 2022-05-07 11:35:39
+BEGIN searcher description
+<BatchingSearcher> timeBudget: 5.000000e+00s, instructionBudget: 14000, baseSearcher:
+DFSSearcher
+</BatchingSearcher>
+END searcher description
+Finished: 2022-05-07 11:36:09
+Elapsed: 00:00:30
+KLEE: done: explored paths = 1399
+KLEE: done: avg. constructs per query = 796
+KLEE: done: total queries = 931
+KLEE: done: valid queries = 787
+KLEE: done: invalid queries = 144
+KLEE: done: query cex = 931
+
+KLEE: done: total instructions = 4337626
+KLEE: done: completed paths = 1399
+KLEE: done: generated tests = 15

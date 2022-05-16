@@ -1,0 +1,263 @@
+        -:    0:Source:../../lib/getprogname.c
+        -:    0:Programs:50
+        -:    1:/* Program name management.
+        -:    2:   Copyright (C) 2016-2020 Free Software Foundation, Inc.
+        -:    3:
+        -:    4:   This program is free software: you can redistribute it and/or modify
+        -:    5:   it under the terms of the GNU General Public License as published by
+        -:    6:   the Free Software Foundation; either version 3 of the License, or
+        -:    7:   (at your option) any later version.
+        -:    8:
+        -:    9:   This program is distributed in the hope that it will be useful,
+        -:   10:   but WITHOUT ANY WARRANTY; without even the implied warranty of
+        -:   11:   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+        -:   12:   GNU General Public License for more details.
+        -:   13:
+        -:   14:   You should have received a copy of the GNU General Public License
+        -:   15:   along with this program.  If not, see <https://www.gnu.org/licenses/>.  */
+        -:   16:
+        -:   17:#include <config.h>
+        -:   18:
+        -:   19:/* Specification.  */
+        -:   20:#include "getprogname.h"
+        -:   21:
+        -:   22:#include <errno.h> /* get program_invocation_name declaration */
+        -:   23:#include <stdlib.h> /* get __argv declaration */
+        -:   24:
+        -:   25:#ifdef _AIX
+        -:   26:# include <unistd.h>
+        -:   27:# include <procinfo.h>
+        -:   28:# include <string.h>
+        -:   29:#endif
+        -:   30:
+        -:   31:#ifdef __MVS__
+        -:   32:# ifndef _OPEN_SYS
+        -:   33:#  define _OPEN_SYS
+        -:   34:# endif
+        -:   35:# include <string.h>
+        -:   36:# include <sys/ps.h>
+        -:   37:#endif
+        -:   38:
+        -:   39:#ifdef __hpux
+        -:   40:# include <unistd.h>
+        -:   41:# include <sys/param.h>
+        -:   42:# include <sys/pstat.h>
+        -:   43:# include <string.h>
+        -:   44:#endif
+        -:   45:
+        -:   46:#ifdef __sgi
+        -:   47:# include <string.h>
+        -:   48:# include <unistd.h>
+        -:   49:# include <stdio.h>
+        -:   50:# include <fcntl.h>
+        -:   51:# include <sys/procfs.h>
+        -:   52:#endif
+        -:   53:
+        -:   54:#include "dirname.h"
+        -:   55:
+        -:   56:#ifndef HAVE_GETPROGNAME             /* not Mac OS X, FreeBSD, NetBSD, OpenBSD >= 5.4, Cygwin */
+        -:   57:char const *
+function getprogname called 1 returned 100% blocks executed 100%
+        1:   58:getprogname (void)
+        -:   59:{
+        -:   60:# if HAVE_DECL_PROGRAM_INVOCATION_SHORT_NAME                /* glibc, BeOS */
+        -:   61:  /* https://www.gnu.org/software/libc/manual/html_node/Error-Messages.html */
+        1:   62:  return program_invocation_short_name;
+        -:   63:# elif HAVE_DECL_PROGRAM_INVOCATION_NAME                    /* glibc, BeOS */
+        -:   64:  /* https://www.gnu.org/software/libc/manual/html_node/Error-Messages.html */
+        -:   65:  return last_component (program_invocation_name);
+        -:   66:# elif HAVE_GETEXECNAME                                     /* Solaris */
+        -:   67:  /* https://docs.oracle.com/cd/E19253-01/816-5168/6mbb3hrb1/index.html */
+        -:   68:  const char *p = getexecname ();
+        -:   69:  if (!p)
+        -:   70:    p = "?";
+        -:   71:  return last_component (p);
+        -:   72:# elif HAVE_DECL___ARGV                                     /* mingw, MSVC */
+        -:   73:  /* https://docs.microsoft.com/en-us/cpp/c-runtime-library/argc-argv-wargv */
+        -:   74:  const char *p = __argv && __argv[0] ? __argv[0] : "?";
+        -:   75:  return last_component (p);
+        -:   76:# elif HAVE_VAR___PROGNAME                                  /* OpenBSD, Android, QNX */
+        -:   77:  /* https://man.openbsd.org/style.9 */
+        -:   78:  /* http://www.qnx.de/developers/docs/6.5.0/index.jsp?topic=%2Fcom.qnx.doc.neutrino_lib_ref%2Fp%2F__progname.html */
+        -:   79:  /* Be careful to declare this only when we absolutely need it
+        -:   80:     (OpenBSD 5.1), rather than when it's available.  Otherwise,
+        -:   81:     its mere declaration makes program_invocation_short_name
+        -:   82:     malfunction (have zero length) with Fedora 25's glibc.  */
+        -:   83:  extern char *__progname;
+        -:   84:  const char *p = __progname;
+        -:   85:#  if defined __ANDROID__
+        -:   86:  return last_component (p);
+        -:   87:#  else
+        -:   88:  return p && p[0] ? p : "?";
+        -:   89:#  endif
+        -:   90:# elif _AIX                                                 /* AIX */
+        -:   91:  /* Idea by Bastien ROUCARIÈS,
+        -:   92:     https://lists.gnu.org/r/bug-gnulib/2010-12/msg00095.html
+        -:   93:     Reference: https://www.ibm.com/support/knowledgecenter/en/ssw_aix_61/com.ibm.aix.basetrf1/getprocs.htm
+        -:   94:  */
+        -:   95:  static char *p;
+        -:   96:  static int first = 1;
+        -:   97:  if (first)
+        -:   98:    {
+        -:   99:      first = 0;
+        -:  100:      pid_t pid = getpid ();
+        -:  101:      struct procentry64 procs;
+        -:  102:      p = (0 < getprocs64 (&procs, sizeof procs, NULL, 0, &pid, 1)
+        -:  103:           ? strdup (procs.pi_comm)
+        -:  104:           : NULL);
+        -:  105:      if (!p)
+        -:  106:        p = "?";
+        -:  107:    }
+        -:  108:  return p;
+        -:  109:# elif defined __hpux
+        -:  110:  static char *p;
+        -:  111:  static int first = 1;
+        -:  112:  if (first)
+        -:  113:    {
+        -:  114:      first = 0;
+        -:  115:      pid_t pid = getpid ();
+        -:  116:      struct pst_status status;
+        -:  117:      if (pstat_getproc (&status, sizeof status, 0, pid) > 0)
+        -:  118:        {
+        -:  119:          char *ucomm = status.pst_ucomm;
+        -:  120:          char *cmd = status.pst_cmd;
+        -:  121:          if (strlen (ucomm) < PST_UCOMMLEN - 1)
+        -:  122:            p = ucomm;
+        -:  123:          else
+        -:  124:            {
+        -:  125:              /* ucomm is truncated to length PST_UCOMMLEN - 1.
+        -:  126:                 Look at cmd instead.  */
+        -:  127:              char *space = strchr (cmd, ' ');
+        -:  128:              if (space != NULL)
+        -:  129:                *space = '\0';
+        -:  130:              p = strrchr (cmd, '/');
+        -:  131:              if (p != NULL)
+        -:  132:                p++;
+        -:  133:              else
+        -:  134:                p = cmd;
+        -:  135:              if (strlen (p) > PST_UCOMMLEN - 1
+        -:  136:                  && memcmp (p, ucomm, PST_UCOMMLEN - 1) == 0)
+        -:  137:                /* p is less truncated than ucomm.  */
+        -:  138:                ;
+        -:  139:              else
+        -:  140:                p = ucomm;
+        -:  141:            }
+        -:  142:          p = strdup (p);
+        -:  143:        }
+        -:  144:      else
+        -:  145:        {
+        -:  146:#  if !defined __LP64__
+        -:  147:          /* Support for 32-bit programs running in 64-bit HP-UX.
+        -:  148:             The documented way to do this is to use the same source code
+        -:  149:             as above, but in a compilation unit where '#define _PSTAT64 1'
+        -:  150:             is in effect.  I prefer a single compilation unit; the struct
+        -:  151:             size and the offsets are not going to change.  */
+        -:  152:          char status64[1216];
+        -:  153:          if (__pstat_getproc64 (status64, sizeof status64, 0, pid) > 0)
+        -:  154:            {
+        -:  155:              char *ucomm = status64 + 288;
+        -:  156:              char *cmd = status64 + 168;
+        -:  157:              if (strlen (ucomm) < PST_UCOMMLEN - 1)
+        -:  158:                p = ucomm;
+        -:  159:              else
+        -:  160:                {
+        -:  161:                  /* ucomm is truncated to length PST_UCOMMLEN - 1.
+        -:  162:                     Look at cmd instead.  */
+        -:  163:                  char *space = strchr (cmd, ' ');
+        -:  164:                  if (space != NULL)
+        -:  165:                    *space = '\0';
+        -:  166:                  p = strrchr (cmd, '/');
+        -:  167:                  if (p != NULL)
+        -:  168:                    p++;
+        -:  169:                  else
+        -:  170:                    p = cmd;
+        -:  171:                  if (strlen (p) > PST_UCOMMLEN - 1
+        -:  172:                      && memcmp (p, ucomm, PST_UCOMMLEN - 1) == 0)
+        -:  173:                    /* p is less truncated than ucomm.  */
+        -:  174:                    ;
+        -:  175:                  else
+        -:  176:                    p = ucomm;
+        -:  177:                }
+        -:  178:              p = strdup (p);
+        -:  179:            }
+        -:  180:          else
+        -:  181:#  endif
+        -:  182:            p = NULL;
+        -:  183:        }
+        -:  184:      if (!p)
+        -:  185:        p = "?";
+        -:  186:    }
+        -:  187:  return p;
+        -:  188:# elif __MVS__                                              /* z/OS */
+        -:  189:  /* https://www.ibm.com/support/knowledgecenter/SSLTBW_2.1.0/com.ibm.zos.v2r1.bpxbd00/rtwgetp.htm */
+        -:  190:  static char *p = "?";
+        -:  191:  static int first = 1;
+        -:  192:  if (first)
+        -:  193:    {
+        -:  194:      pid_t pid = getpid ();
+        -:  195:      int token;
+        -:  196:      W_PSPROC buf;
+        -:  197:      first = 0;
+        -:  198:      memset (&buf, 0, sizeof(buf));
+        -:  199:      buf.ps_cmdptr    = (char *) malloc (buf.ps_cmdlen    = PS_CMDBLEN_LONG);
+        -:  200:      buf.ps_conttyptr = (char *) malloc (buf.ps_conttylen = PS_CONTTYBLEN);
+        -:  201:      buf.ps_pathptr   = (char *) malloc (buf.ps_pathlen   = PS_PATHBLEN);
+        -:  202:      if (buf.ps_cmdptr && buf.ps_conttyptr && buf.ps_pathptr)
+        -:  203:        {
+        -:  204:          for (token = 0; token >= 0;
+        -:  205:               token = w_getpsent (token, &buf, sizeof(buf)))
+        -:  206:            {
+        -:  207:              if (token > 0 && buf.ps_pid == pid)
+        -:  208:                {
+        -:  209:                  char *s = strdup (last_component (buf.ps_pathptr));
+        -:  210:                  if (s)
+        -:  211:                    p = s;
+        -:  212:                  break;
+        -:  213:                }
+        -:  214:            }
+        -:  215:        }
+        -:  216:      free (buf.ps_cmdptr);
+        -:  217:      free (buf.ps_conttyptr);
+        -:  218:      free (buf.ps_pathptr);
+        -:  219:    }
+        -:  220:  return p;
+        -:  221:# elif defined __sgi                                        /* IRIX */
+        -:  222:  char filename[50];
+        -:  223:  int fd;
+        -:  224:
+        -:  225:  sprintf (filename, "/proc/pinfo/%d", (int) getpid ());
+        -:  226:  fd = open (filename, O_RDONLY);
+        -:  227:  if (0 <= fd)
+        -:  228:    {
+        -:  229:      prpsinfo_t buf;
+        -:  230:      int ioctl_ok = 0 <= ioctl (fd, PIOCPSINFO, &buf);
+        -:  231:      close (fd);
+        -:  232:      if (ioctl_ok)
+        -:  233:        {
+        -:  234:          char *name = buf.pr_fname;
+        -:  235:          size_t namesize = sizeof buf.pr_fname;
+        -:  236:          /* It may not be NUL-terminated.  */
+        -:  237:          char *namenul = memchr (name, '\0', namesize);
+        -:  238:          size_t namelen = namenul ? namenul - name : namesize;
+        -:  239:          char *namecopy = malloc (namelen + 1);
+        -:  240:          if (namecopy)
+        -:  241:            {
+        -:  242:              namecopy[namelen] = '\0';
+        -:  243:              return memcpy (namecopy, name, namelen);
+        -:  244:            }
+        -:  245:        }
+        -:  246:    }
+        -:  247:  return NULL;
+        -:  248:# else
+        -:  249:#  error "getprogname module not ported to this OS"
+        -:  250:# endif
+        -:  251:}
+        -:  252:
+        -:  253:#endif
+        -:  254:
+        -:  255:/*
+        -:  256: * Hey Emacs!
+        -:  257: * Local Variables:
+        -:  258: * coding: utf-8
+        -:  259: * End:
+        -:  260: */

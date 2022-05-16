@@ -1,0 +1,362 @@
+        -:    0:Source:../../lib/c-stack.c
+        -:    0:Programs:50
+        -:    1:/* Stack overflow handling.
+        -:    2:
+        -:    3:   Copyright (C) 2002, 2004, 2006, 2008-2020 Free Software Foundation, Inc.
+        -:    4:
+        -:    5:   This program is free software: you can redistribute it and/or modify
+        -:    6:   it under the terms of the GNU General Public License as published by
+        -:    7:   the Free Software Foundation; either version 3 of the License, or
+        -:    8:   (at your option) any later version.
+        -:    9:
+        -:   10:   This program is distributed in the hope that it will be useful,
+        -:   11:   but WITHOUT ANY WARRANTY; without even the implied warranty of
+        -:   12:   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+        -:   13:   GNU General Public License for more details.
+        -:   14:
+        -:   15:   You should have received a copy of the GNU General Public License
+        -:   16:   along with this program.  If not, see <https://www.gnu.org/licenses/>.  */
+        -:   17:
+        -:   18:/* Written by Paul Eggert.  */
+        -:   19:
+        -:   20:/* NOTES:
+        -:   21:
+        -:   22:   A program that uses alloca, dynamic arrays, or large local
+        -:   23:   variables may extend the stack by more than a page at a time.  If
+        -:   24:   so, when the stack overflows the operating system may not detect
+        -:   25:   the overflow until the program uses the array, and this module may
+        -:   26:   incorrectly report a program error instead of a stack overflow.
+        -:   27:
+        -:   28:   To avoid this problem, allocate only small objects on the stack; a
+        -:   29:   program should be OK if it limits single allocations to a page or
+        -:   30:   less.  Allocate larger arrays in static storage, or on the heap
+        -:   31:   (e.g., with malloc).  Yes, this is a pain, but we don't know of any
+        -:   32:   better solution that is portable.
+        -:   33:
+        -:   34:   No attempt has been made to deal with multithreaded applications.  */
+        -:   35:
+        -:   36:#include <config.h>
+        -:   37:
+        -:   38:#ifndef __attribute__
+        -:   39:# if __GNUC__ < 3
+        -:   40:#  define __attribute__(x)
+        -:   41:# endif
+        -:   42:#endif
+        -:   43:
+        -:   44:#include "gettext.h"
+        -:   45:#define _(msgid) gettext (msgid)
+        -:   46:
+        -:   47:#include <errno.h>
+        -:   48:
+        -:   49:#include <signal.h>
+        -:   50:#if ! HAVE_STACK_T && ! defined stack_t
+        -:   51:typedef struct sigaltstack stack_t;
+        -:   52:#endif
+        -:   53:#ifndef SIGSTKSZ
+        -:   54:# define SIGSTKSZ 16384
+        -:   55:#elif HAVE_LIBSIGSEGV && SIGSTKSZ < 16384
+        -:   56:/* libsigsegv 2.6 through 2.8 have a bug where some architectures use
+        -:   57:   more than the Linux default of an 8k alternate stack when deciding
+        -:   58:   if a fault was caused by stack overflow.  */
+        -:   59:# undef SIGSTKSZ
+        -:   60:# define SIGSTKSZ 16384
+        -:   61:#endif
+        -:   62:
+        -:   63:#include <stdlib.h>
+        -:   64:#include <string.h>
+        -:   65:
+        -:   66:/* Posix 2001 declares ucontext_t in <ucontext.h>, Posix 200x in
+        -:   67:   <signal.h>.  */
+        -:   68:#if HAVE_UCONTEXT_H
+        -:   69:# include <ucontext.h>
+        -:   70:#endif
+        -:   71:
+        -:   72:#include <unistd.h>
+        -:   73:
+        -:   74:#if HAVE_LIBSIGSEGV
+        -:   75:# include <sigsegv.h>
+        -:   76:#endif
+        -:   77:
+        -:   78:#include "c-stack.h"
+        -:   79:#include "exitfail.h"
+        -:   80:#include "ignore-value.h"
+        -:   81:#include "getprogname.h"
+        -:   82:
+        -:   83:#if defined SA_ONSTACK && defined SA_SIGINFO
+        -:   84:# define SIGINFO_WORKS 1
+        -:   85:#else
+        -:   86:# define SIGINFO_WORKS 0
+        -:   87:# ifndef SA_ONSTACK
+        -:   88:#  define SA_ONSTACK 0
+        -:   89:# endif
+        -:   90:#endif
+        -:   91:
+        -:   92:/* The user-specified action to take when a SEGV-related program error
+        -:   93:   or stack overflow occurs.  */
+        -:   94:static _GL_ASYNC_SAFE void (* volatile segv_action) (int);
+        -:   95:
+        -:   96:/* Translated messages for program errors and stack overflow.  Do not
+        -:   97:   translate them in the signal handler, since gettext is not
+        -:   98:   async-signal-safe.  */
+        -:   99:static char const * volatile program_error_message;
+        -:  100:static char const * volatile stack_overflow_message;
+        -:  101:
+        -:  102:#if ((HAVE_LIBSIGSEGV && ! HAVE_XSI_STACK_OVERFLOW_HEURISTIC) \
+        -:  103:     || (HAVE_SIGALTSTACK && HAVE_DECL_SIGALTSTACK            \
+        -:  104:         && HAVE_STACK_OVERFLOW_HANDLING))
+        -:  105:
+        -:  106:/* Output an error message, then exit with status EXIT_FAILURE if it
+        -:  107:   appears to have been a stack overflow, or with a core dump
+        -:  108:   otherwise.  This function is async-signal-safe.  */
+        -:  109:
+        -:  110:static char const * volatile progname;
+        -:  111:
+        -:  112:static _GL_ASYNC_SAFE _Noreturn void
+function die called 0 returned 0% blocks executed 0%
+    #####:  113:die (int signo)
+        -:  114:{
+        -:  115:  char const *message;
+        -:  116:#if !SIGINFO_WORKS && !HAVE_LIBSIGSEGV
+        -:  117:  /* We can't easily determine whether it is a stack overflow; so
+        -:  118:     assume that the rest of our program is perfect (!) and that
+        -:  119:     this segmentation violation is a stack overflow.  */
+        -:  120:  signo = 0;
+        -:  121:#endif /* !SIGINFO_WORKS && !HAVE_LIBSIGSEGV */
+    #####:  122:  segv_action (signo);
+call    0 never executed
+    #####:  123:  message = signo ? program_error_message : stack_overflow_message;
+branch  0 never executed
+branch  1 never executed
+    #####:  124:  ignore_value (write (STDERR_FILENO, progname, strlen (progname)));
+call    0 never executed
+    #####:  125:  ignore_value (write (STDERR_FILENO, ": ", 2));
+call    0 never executed
+    #####:  126:  ignore_value (write (STDERR_FILENO, message, strlen (message)));
+call    0 never executed
+    #####:  127:  ignore_value (write (STDERR_FILENO, "\n", 1));
+call    0 never executed
+    #####:  128:  if (! signo)
+branch  0 never executed
+branch  1 never executed
+    #####:  129:    _exit (exit_failure);
+call    0 never executed
+    #####:  130:  raise (signo);
+call    0 never executed
+    #####:  131:  abort ();
+        -:  132:}
+        -:  133:#endif
+        -:  134:
+        -:  135:#if (HAVE_SIGALTSTACK && HAVE_DECL_SIGALTSTACK \
+        -:  136:     && HAVE_STACK_OVERFLOW_HANDLING) || HAVE_LIBSIGSEGV
+        -:  137:
+        -:  138:/* Storage for the alternate signal stack.  */
+        -:  139:static union
+        -:  140:{
+        -:  141:  char buffer[SIGSTKSZ];
+        -:  142:
+        -:  143:  /* These other members are for proper alignment.  There's no
+        -:  144:     standard way to guarantee stack alignment, but this seems enough
+        -:  145:     in practice.  */
+        -:  146:  long double ld;
+        -:  147:  long l;
+        -:  148:  void *p;
+        -:  149:} alternate_signal_stack;
+        -:  150:
+        -:  151:static _GL_ASYNC_SAFE void
+function null_action called 0 returned 0% blocks executed 0%
+    #####:  152:null_action (int signo _GL_UNUSED)
+        -:  153:{
+    #####:  154:}
+        -:  155:
+        -:  156:#endif /* SIGALTSTACK || LIBSIGSEGV */
+        -:  157:
+        -:  158:/* Only use libsigsegv if we need it; platforms like Solaris can
+        -:  159:   detect stack overflow without the overhead of an external
+        -:  160:   library.  */
+        -:  161:#if HAVE_LIBSIGSEGV && ! HAVE_XSI_STACK_OVERFLOW_HEURISTIC
+        -:  162:
+        -:  163:/* Nonzero if general segv handler could not be installed.  */
+        -:  164:static volatile int segv_handler_missing;
+        -:  165:
+        -:  166:/* Handle a segmentation violation and exit if it cannot be stack
+        -:  167:   overflow.  This function is async-signal-safe.  */
+        -:  168:
+        -:  169:static _GL_ASYNC_SAFE int
+        -:  170:segv_handler (void *address _GL_UNUSED, int serious)
+        -:  171:{
+        -:  172:# if DEBUG
+        -:  173:  {
+        -:  174:    char buf[1024];
+        -:  175:    int saved_errno = errno;
+        -:  176:    sprintf (buf, "segv_handler serious=%d\n", serious);
+        -:  177:    write (STDERR_FILENO, buf, strlen (buf));
+        -:  178:    errno = saved_errno;
+        -:  179:  }
+        -:  180:# endif
+        -:  181:
+        -:  182:  /* If this fault is not serious, return 0 to let the stack overflow
+        -:  183:     handler take a shot at it.  */
+        -:  184:  if (!serious)
+        -:  185:    return 0;
+        -:  186:  die (SIGSEGV);
+        -:  187:}
+        -:  188:
+        -:  189:/* Handle a segmentation violation that is likely to be a stack
+        -:  190:   overflow and exit.  This function is async-signal-safe.  */
+        -:  191:
+        -:  192:static _GL_ASYNC_SAFE _Noreturn void
+        -:  193:overflow_handler (int emergency, stackoverflow_context_t context _GL_UNUSED)
+        -:  194:{
+        -:  195:# if DEBUG
+        -:  196:  {
+        -:  197:    char buf[1024];
+        -:  198:    sprintf (buf, "overflow_handler emergency=%d segv_handler_missing=%d\n",
+        -:  199:             emergency, segv_handler_missing);
+        -:  200:    write (STDERR_FILENO, buf, strlen (buf));
+        -:  201:  }
+        -:  202:# endif
+        -:  203:
+        -:  204:  die ((!emergency || segv_handler_missing) ? 0 : SIGSEGV);
+        -:  205:}
+        -:  206:
+        -:  207:int
+        -:  208:c_stack_action (_GL_ASYNC_SAFE void (*action) (int))
+        -:  209:{
+        -:  210:  segv_action = action ? action : null_action;
+        -:  211:  program_error_message = _("program error");
+        -:  212:  stack_overflow_message = _("stack overflow");
+        -:  213:  progname = getprogname ();
+        -:  214:
+        -:  215:  /* Always install the overflow handler.  */
+        -:  216:  if (stackoverflow_install_handler (overflow_handler,
+        -:  217:                                     alternate_signal_stack.buffer,
+        -:  218:                                     sizeof alternate_signal_stack.buffer))
+        -:  219:    {
+        -:  220:      errno = ENOTSUP;
+        -:  221:      return -1;
+        -:  222:    }
+        -:  223:  /* Try installing a general handler; if it fails, then treat all
+        -:  224:     segv as stack overflow.  */
+        -:  225:  segv_handler_missing = sigsegv_install_handler (segv_handler);
+        -:  226:  return 0;
+        -:  227:}
+        -:  228:
+        -:  229:#elif HAVE_SIGALTSTACK && HAVE_DECL_SIGALTSTACK && HAVE_STACK_OVERFLOW_HANDLING
+        -:  230:
+        -:  231:# if SIGINFO_WORKS
+        -:  232:
+        -:  233:/* Handle a segmentation violation and exit.  This function is
+        -:  234:   async-signal-safe.  */
+        -:  235:
+        -:  236:static _GL_ASYNC_SAFE _Noreturn void
+function segv_handler called 0 returned 0% blocks executed 0%
+    #####:  237:segv_handler (int signo, siginfo_t *info, void *context _GL_UNUSED)
+        -:  238:{
+        -:  239:  /* Clear SIGNO if it seems to have been a stack overflow.  */
+        -:  240:#  if ! HAVE_XSI_STACK_OVERFLOW_HEURISTIC
+        -:  241:  /* We can't easily determine whether it is a stack overflow; so
+        -:  242:     assume that the rest of our program is perfect (!) and that
+        -:  243:     this segmentation violation is a stack overflow.
+        -:  244:
+        -:  245:     Note that although both Linux and Solaris provide
+        -:  246:     sigaltstack, SA_ONSTACK, and SA_SIGINFO, currently only
+        -:  247:     Solaris satisfies the XSI heuristic.  This is because
+        -:  248:     Solaris populates uc_stack with the details of the
+        -:  249:     interrupted stack, while Linux populates it with the details
+        -:  250:     of the current stack.  */
+    #####:  251:  signo = 0;
+        -:  252:#  else
+        -:  253:  if (0 < info->si_code)
+        -:  254:    {
+        -:  255:      /* If the faulting address is within the stack, or within one
+        -:  256:         page of the stack, assume that it is a stack overflow.  */
+        -:  257:      ucontext_t const *user_context = context;
+        -:  258:      char const *stack_base = user_context->uc_stack.ss_sp;
+        -:  259:      size_t stack_size = user_context->uc_stack.ss_size;
+        -:  260:      char const *faulting_address = info->si_addr;
+        -:  261:      size_t page_size = sysconf (_SC_PAGESIZE);
+        -:  262:      size_t s = faulting_address - stack_base + page_size;
+        -:  263:      if (s < stack_size + 2 * page_size)
+        -:  264:        signo = 0;
+        -:  265:
+        -:  266:#   if DEBUG
+        -:  267:      {
+        -:  268:        char buf[1024];
+        -:  269:        sprintf (buf,
+        -:  270:                 "segv_handler fault=%p base=%p size=%lx page=%lx signo=%d\n",
+        -:  271:                 faulting_address, stack_base, (unsigned long) stack_size,
+        -:  272:                 (unsigned long) page_size, signo);
+        -:  273:        write (STDERR_FILENO, buf, strlen (buf));
+        -:  274:      }
+        -:  275:#   endif
+        -:  276:    }
+        -:  277:#  endif
+        -:  278:
+    #####:  279:  die (signo);
+        -:  280:}
+        -:  281:# endif
+        -:  282:
+        -:  283:int
+function c_stack_action called 1 returned 100% blocks executed 80%
+        1:  284:c_stack_action (_GL_ASYNC_SAFE void (*action) (int))
+        -:  285:{
+        -:  286:  int r;
+        -:  287:  stack_t st;
+        -:  288:  struct sigaction act;
+        1:  289:  st.ss_flags = 0;
+        -:  290:# if SIGALTSTACK_SS_REVERSED
+        -:  291:  /* Irix mistakenly treats ss_sp as the upper bound, rather than
+        -:  292:     lower bound, of the alternate stack.  */
+        -:  293:  st.ss_sp = alternate_signal_stack.buffer + SIGSTKSZ - sizeof (void *);
+        -:  294:  st.ss_size = sizeof alternate_signal_stack.buffer - sizeof (void *);
+        -:  295:# else
+        1:  296:  st.ss_sp = alternate_signal_stack.buffer;
+        1:  297:  st.ss_size = sizeof alternate_signal_stack.buffer;
+        -:  298:# endif
+        1:  299:  r = sigaltstack (&st, NULL);
+call    0 returned 100%
+        1:  300:  if (r != 0)
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+    #####:  301:    return r;
+        -:  302:
+        1:  303:  segv_action = action ? action : null_action;
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+        1:  304:  program_error_message = _("program error");
+        1:  305:  stack_overflow_message = _("stack overflow");
+        1:  306:  progname = getprogname ();
+        -:  307:
+        1:  308:  sigemptyset (&act.sa_mask);
+call    0 returned 100%
+        -:  309:
+        -:  310:# if SIGINFO_WORKS
+        -:  311:  /* POSIX 1003.1-2001 says SA_RESETHAND implies SA_NODEFER, but
+        -:  312:     this is not true on Solaris 8 at least.  It doesn't hurt to use
+        -:  313:     SA_NODEFER here, so leave it in.  */
+        1:  314:  act.sa_flags = SA_NODEFER | SA_ONSTACK | SA_RESETHAND | SA_SIGINFO;
+        1:  315:  act.sa_sigaction = segv_handler;
+        -:  316:# else
+        -:  317:  act.sa_flags = SA_NODEFER | SA_ONSTACK | SA_RESETHAND;
+        -:  318:  act.sa_handler = die;
+        -:  319:# endif
+        -:  320:
+        -:  321:# if FAULT_YIELDS_SIGBUS
+        -:  322:  if (sigaction (SIGBUS, &act, NULL) < 0)
+        -:  323:    return -1;
+        -:  324:# endif
+        1:  325:  return sigaction (SIGSEGV, &act, NULL);
+call    0 returned 100%
+        -:  326:}
+        -:  327:
+        -:  328:#else /* ! ((HAVE_SIGALTSTACK && HAVE_DECL_SIGALTSTACK
+        -:  329:             && HAVE_STACK_OVERFLOW_HANDLING) || HAVE_LIBSIGSEGV) */
+        -:  330:
+        -:  331:int
+        -:  332:c_stack_action (_GL_ASYNC_SAFE void (*action) (int)  _GL_UNUSED)
+        -:  333:{
+        -:  334:  errno = ENOTSUP;
+        -:  335:  return -1;
+        -:  336:}
+        -:  337:
+        -:  338:#endif

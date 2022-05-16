@@ -1,0 +1,291 @@
+        -:    0:Source:../../src/searchutils.c
+        -:    0:Programs:50
+        -:    1:/* searchutils.c - helper subroutines for grep's matchers.
+        -:    2:   Copyright 1992, 1998, 2000, 2007, 2009-2020 Free Software Foundation, Inc.
+        -:    3:
+        -:    4:   This program is free software; you can redistribute it and/or modify
+        -:    5:   it under the terms of the GNU General Public License as published by
+        -:    6:   the Free Software Foundation; either version 3, or (at your option)
+        -:    7:   any later version.
+        -:    8:
+        -:    9:   This program is distributed in the hope that it will be useful,
+        -:   10:   but WITHOUT ANY WARRANTY; without even the implied warranty of
+        -:   11:   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+        -:   12:   GNU General Public License for more details.
+        -:   13:
+        -:   14:   You should have received a copy of the GNU General Public License
+        -:   15:   along with this program; if not, write to the Free Software
+        -:   16:   Foundation, Inc., 51 Franklin Street - Fifth Floor, Boston, MA
+        -:   17:   02110-1301, USA.  */
+        -:   18:
+        -:   19:#include <config.h>
+        -:   20:
+        -:   21:#define SEARCH_INLINE _GL_EXTERN_INLINE
+        -:   22:#define SYSTEM_INLINE _GL_EXTERN_INLINE
+        -:   23:#include "search.h"
+        -:   24:
+        -:   25:/* For each byte B, sbwordchar[B] is true if B is a single-byte
+        -:   26:   character that is a word constituent, and is false otherwise.  */
+        -:   27:static bool sbwordchar[NCHAR];
+        -:   28:
+        -:   29:/* Whether -w considers WC to be a word constituent.  */
+        -:   30:static bool
+function wordchar called 0 returned 0% blocks executed 0%
+    #####:   31:wordchar (wint_t wc)
+        -:   32:{
+    #####:   33:  return wc == L'_' || iswalnum (wc);
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:   34:}
+        -:   35:
+        -:   36:void
+function wordinit called 0 returned 0% blocks executed 0%
+    #####:   37:wordinit (void)
+        -:   38:{
+    #####:   39:  for (int i = 0; i < NCHAR; i++)
+branch  0 never executed
+branch  1 never executed
+    #####:   40:    sbwordchar[i] = wordchar (localeinfo.sbctowc[i]);
+call    0 never executed
+    #####:   41:}
+        -:   42:
+        -:   43:kwset_t
+function kwsinit called 1 returned 100% blocks executed 14%
+        1:   44:kwsinit (bool mb_trans)
+        -:   45:{
+        1:   46:  char *trans = NULL;
+        -:   47:
+        1:   48:  if (match_icase && (MB_CUR_MAX == 1 || mb_trans))
+branch  0 taken 0% (fallthrough)
+branch  1 taken 100%
+call    2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+branch  6 never executed
+        -:   49:    {
+    #####:   50:      trans = xmalloc (NCHAR);
+call    0 never executed
+    #####:   51:      if (MB_CUR_MAX == 1)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####:   52:        for (int i = 0; i < NCHAR; i++)
+branch  0 never executed
+branch  1 never executed
+    #####:   53:          trans[i] = toupper (i);
+        -:   54:      else
+    #####:   55:        for (int i = 0; i < NCHAR; i++)
+branch  0 never executed
+branch  1 never executed
+        -:   56:          {
+    #####:   57:            wint_t wc = localeinfo.sbctowc[i];
+    #####:   58:            wint_t uwc = towupper (wc);
+    #####:   59:            if (uwc != wc)
+branch  0 never executed
+branch  1 never executed
+        -:   60:              {
+    #####:   61:                mbstate_t mbs = { 0 };
+    #####:   62:                size_t len = wcrtomb (&trans[i], uwc, &mbs);
+call    0 never executed
+    #####:   63:                if (len != 1)
+branch  0 never executed
+branch  1 never executed
+    #####:   64:                  abort ();
+call    0 never executed
+        -:   65:              }
+        -:   66:            else
+    #####:   67:              trans[i] = i;
+        -:   68:          }
+        -:   69:    }
+        -:   70:
+        1:   71:  return kwsalloc (trans);
+call    0 returned 100%
+        -:   72:}
+        -:   73:
+        -:   74:/* In the buffer *MB_START, return the number of bytes needed to go
+        -:   75:   back from CUR to the previous boundary, where a "boundary" is the
+        -:   76:   start of a multibyte character or is an error-encoding byte.  The
+        -:   77:   buffer ends at END (i.e., one past the address of the buffer's last
+        -:   78:   byte).  If CUR is already at a boundary, return 0.  If CUR is no
+        -:   79:   larger than *MB_START, return CUR - *MB_START without modifying
+        -:   80:   *MB_START or *MBCLEN.
+        -:   81:
+        -:   82:   When returning zero, set *MB_START to CUR.  When returning a
+        -:   83:   positive value, set *MB_START to the next boundary after CUR,
+        -:   84:   or to END if there is no such boundary, and set *MBCLEN to the
+        -:   85:   length of the preceding character.  */
+        -:   86:ptrdiff_t
+function mb_goback called 0 returned 0% blocks executed 0%
+    #####:   87:mb_goback (char const **mb_start, size_t *mbclen, char const *cur,
+        -:   88:           char const *end)
+        -:   89:{
+    #####:   90:  const char *p = *mb_start;
+    #####:   91:  const char *p0 = p;
+        -:   92:  size_t clen;
+        -:   93:
+    #####:   94:  if (cur <= p)
+branch  0 never executed
+branch  1 never executed
+    #####:   95:    return cur - p;
+        -:   96:
+    #####:   97:  if (localeinfo.using_utf8)
+branch  0 never executed
+branch  1 never executed
+        -:   98:    {
+    #####:   99:      p = cur;
+    #####:  100:      clen = 1;
+        -:  101:
+    #####:  102:      if (cur < end && (*cur & 0xc0) == 0x80)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  103:        for (int i = 1; i <= 3; i++)
+branch  0 never executed
+branch  1 never executed
+    #####:  104:          if ((cur[-i] & 0xc0) != 0x80)
+branch  0 never executed
+branch  1 never executed
+        -:  105:            {
+    #####:  106:              mbstate_t mbs = { 0 };
+    #####:  107:              clen = mb_clen (cur - i, end - (cur - i), &mbs);
+call    0 never executed
+    #####:  108:              if (i < clen && clen < (size_t) -2)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  109:                {
+    #####:  110:                  p0 = cur - i;
+    #####:  111:                  p = p0 + clen;
+        -:  112:                }
+    #####:  113:              break;
+        -:  114:            }
+        -:  115:    }
+        -:  116:  else
+        -:  117:    {
+    #####:  118:      mbstate_t mbs = { 0 };
+        -:  119:      do
+        -:  120:        {
+    #####:  121:          clen = mb_clen (p, end - p, &mbs);
+call    0 never executed
+        -:  122:
+    #####:  123:          if ((size_t) -2 <= clen)
+branch  0 never executed
+branch  1 never executed
+        -:  124:            {
+        -:  125:              /* An invalid sequence, or a truncated multibyte character.
+        -:  126:                 Treat it as a single byte character.  */
+    #####:  127:              clen = 1;
+    #####:  128:              memset (&mbs, 0, sizeof mbs);
+        -:  129:            }
+    #####:  130:          p0 = p;
+    #####:  131:          p += clen;
+        -:  132:        }
+    #####:  133:      while (p < cur);
+branch  0 never executed
+branch  1 never executed
+        -:  134:    }
+        -:  135:
+    #####:  136:  *mb_start = p;
+    #####:  137:  if (mbclen)
+branch  0 never executed
+branch  1 never executed
+    #####:  138:    *mbclen = clen;
+    #####:  139:  return p == cur ? 0 : cur - p0;
+branch  0 never executed
+branch  1 never executed
+        -:  140:}
+        -:  141:
+        -:  142:/* Examine the start of BUF (which goes to END) for word constituents.
+        -:  143:   If COUNTALL, examine as many as possible; otherwise, examine at most one.
+        -:  144:   Return the total number of bytes in the examined characters.  */
+        -:  145:static size_t
+function wordchars_count called 0 returned 0% blocks executed 0%
+    #####:  146:wordchars_count (char const *buf, char const *end, bool countall)
+        -:  147:{
+    #####:  148:  size_t n = 0;
+    #####:  149:  mbstate_t mbs = { 0 };
+    #####:  150:  while (n < end - buf)
+branch  0 never executed
+branch  1 never executed
+        -:  151:    {
+    #####:  152:      unsigned char b = buf[n];
+    #####:  153:      if (sbwordchar[b])
+branch  0 never executed
+branch  1 never executed
+    #####:  154:        n++;
+    #####:  155:      else if (localeinfo.sbclen[b] != -2)
+branch  0 never executed
+branch  1 never executed
+    #####:  156:        break;
+        -:  157:      else
+        -:  158:        {
+    #####:  159:          wchar_t wc = 0;
+    #####:  160:          size_t wcbytes = mbrtowc (&wc, buf + n, end - buf - n, &mbs);
+call    0 never executed
+    #####:  161:          if (!wordchar (wc))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####:  162:            break;
+    #####:  163:          n += wcbytes + !wcbytes;
+        -:  164:        }
+    #####:  165:      if (!countall)
+branch  0 never executed
+branch  1 never executed
+    #####:  166:        break;
+        -:  167:    }
+    #####:  168:  return n;
+        -:  169:}
+        -:  170:
+        -:  171:/* Examine the start of BUF for the longest prefix containing just
+        -:  172:   word constituents.  Return the total number of bytes in the prefix.
+        -:  173:   The buffer ends at END.  */
+        -:  174:size_t
+function wordchars_size called 0 returned 0% blocks executed 0%
+    #####:  175:wordchars_size (char const *buf, char const *end)
+        -:  176:{
+    #####:  177:  return wordchars_count (buf, end, true);
+call    0 never executed
+        -:  178:}
+        -:  179:
+        -:  180:/* If BUF starts with a word constituent, return the number of bytes
+        -:  181:   used to represent it; otherwise, return zero.  The buffer ends at END.  */
+        -:  182:size_t
+function wordchar_next called 0 returned 0% blocks executed 0%
+    #####:  183:wordchar_next (char const *buf, char const *end)
+        -:  184:{
+    #####:  185:  return wordchars_count (buf, end, false);
+call    0 never executed
+        -:  186:}
+        -:  187:
+        -:  188:/* In the buffer BUF, return nonzero if the character whose encoding
+        -:  189:   contains the byte before CUR is a word constituent.  The buffer
+        -:  190:   ends at END.  */
+        -:  191:size_t
+function wordchar_prev called 0 returned 0% blocks executed 0%
+    #####:  192:wordchar_prev (char const *buf, char const *cur, char const *end)
+        -:  193:{
+    #####:  194:  if (buf == cur)
+branch  0 never executed
+branch  1 never executed
+    #####:  195:    return 0;
+    #####:  196:  unsigned char b = *--cur;
+    #####:  197:  if (! localeinfo.multibyte
+branch  0 never executed
+branch  1 never executed
+    #####:  198:      || (localeinfo.using_utf8 && localeinfo.sbclen[b] != -2))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  199:    return sbwordchar[b];
+    #####:  200:  char const *p = buf;
+    #####:  201:  cur -= mb_goback (&p, NULL, cur, end);
+call    0 never executed
+    #####:  202:  return wordchar_next (cur, end);
+        -:  203:}

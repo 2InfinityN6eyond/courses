@@ -1,0 +1,809 @@
+        -:    0:Source:../../src/dfasearch.c
+        -:    0:Programs:50
+        -:    1:/* dfasearch.c - searching subroutines using dfa and regex for grep.
+        -:    2:   Copyright 1992, 1998, 2000, 2007, 2009-2020 Free Software Foundation, Inc.
+        -:    3:
+        -:    4:   This program is free software; you can redistribute it and/or modify
+        -:    5:   it under the terms of the GNU General Public License as published by
+        -:    6:   the Free Software Foundation; either version 3, or (at your option)
+        -:    7:   any later version.
+        -:    8:
+        -:    9:   This program is distributed in the hope that it will be useful,
+        -:   10:   but WITHOUT ANY WARRANTY; without even the implied warranty of
+        -:   11:   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+        -:   12:   GNU General Public License for more details.
+        -:   13:
+        -:   14:   You should have received a copy of the GNU General Public License
+        -:   15:   along with this program; if not, write to the Free Software
+        -:   16:   Foundation, Inc., 51 Franklin Street - Fifth Floor, Boston, MA
+        -:   17:   02110-1301, USA.  */
+        -:   18:
+        -:   19:/* Written August 1992 by Mike Haertel. */
+        -:   20:
+        -:   21:#include <config.h>
+        -:   22:#include "intprops.h"
+        -:   23:#include "search.h"
+        -:   24:#include "die.h"
+        -:   25:#include <error.h>
+        -:   26:
+        -:   27:struct dfa_comp
+        -:   28:{
+        -:   29:  /* KWset compiled pattern.  For Ecompile and Gcompile, we compile
+        -:   30:     a list of strings, at least one of which is known to occur in
+        -:   31:     any string matching the regexp. */
+        -:   32:  kwset_t kwset;
+        -:   33:
+        -:   34:  /* DFA compiled regexp. */
+        -:   35:  struct dfa *dfa;
+        -:   36:
+        -:   37:  /* Regex compiled regexps. */
+        -:   38:  struct re_pattern_buffer *patterns;
+        -:   39:  size_t pcount;
+        -:   40:  struct re_registers regs;
+        -:   41:
+        -:   42:  /* Number of compiled fixed strings known to exactly match the regexp.
+        -:   43:     If kwsexec returns < kwset_exact_matches, then we don't need to
+        -:   44:     call the regexp matcher at all. */
+        -:   45:  ptrdiff_t kwset_exact_matches;
+        -:   46:
+        -:   47:  bool begline;
+        -:   48:};
+        -:   49:
+        -:   50:void
+function dfaerror called 0 returned 0% blocks executed 0%
+    #####:   51:dfaerror (char const *mesg)
+        -:   52:{
+    #####:   53:  die (EXIT_TROUBLE, 0, "%s", mesg);
+call    0 never executed
+        -:   54:}
+        -:   55:
+        -:   56:/* For now, the sole dfawarn-eliciting condition (use of a regexp
+        -:   57:   like '[:lower:]') is unequivocally an error, so treat it as such,
+        -:   58:   when possible.  */
+        -:   59:void
+function dfawarn called 0 returned 0% blocks executed 0%
+    #####:   60:dfawarn (char const *mesg)
+        -:   61:{
+    #####:   62:  if (!getenv ("POSIXLY_CORRECT"))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####:   63:    dfaerror (mesg);
+call    0 never executed
+    #####:   64:}
+        -:   65:
+        -:   66:/* If the DFA turns out to have some set of fixed strings one of
+        -:   67:   which must occur in the match, then we build a kwset matcher
+        -:   68:   to find those strings, and thus quickly filter out impossible
+        -:   69:   matches. */
+        -:   70:static void
+function kwsmusts called 0 returned 0% blocks executed 0%
+    #####:   71:kwsmusts (struct dfa_comp *dc)
+        -:   72:{
+    #####:   73:  struct dfamust *dm = dfamust (dc->dfa);
+call    0 never executed
+    #####:   74:  if (!dm)
+branch  0 never executed
+branch  1 never executed
+    #####:   75:    return;
+    #####:   76:  dc->kwset = kwsinit (false);
+call    0 never executed
+    #####:   77:  if (dm->exact)
+branch  0 never executed
+branch  1 never executed
+        -:   78:    {
+        -:   79:      /* Prepare a substring whose presence implies a match.
+        -:   80:         The kwset matcher will return the index of the matching
+        -:   81:         string that it chooses. */
+    #####:   82:      ++dc->kwset_exact_matches;
+    #####:   83:      ptrdiff_t old_len = strlen (dm->must);
+    #####:   84:      ptrdiff_t new_len = old_len + dm->begline + dm->endline;
+    #####:   85:      char *must = xmalloc (new_len);
+call    0 never executed
+    #####:   86:      char *mp = must;
+    #####:   87:      *mp = eolbyte;
+    #####:   88:      mp += dm->begline;
+    #####:   89:      dc->begline |= dm->begline;
+    #####:   90:      memcpy (mp, dm->must, old_len);
+    #####:   91:      if (dm->endline)
+branch  0 never executed
+branch  1 never executed
+    #####:   92:        mp[old_len] = eolbyte;
+    #####:   93:      kwsincr (dc->kwset, must, new_len);
+call    0 never executed
+    #####:   94:      free (must);
+        -:   95:    }
+        -:   96:  else
+        -:   97:    {
+        -:   98:      /* Otherwise, filtering with this substring should help reduce the
+        -:   99:         search space, but we'll still have to use the regexp matcher.  */
+    #####:  100:      kwsincr (dc->kwset, dm->must, strlen (dm->must));
+call    0 never executed
+        -:  101:    }
+    #####:  102:  kwsprep (dc->kwset);
+call    0 never executed
+    #####:  103:  dfamustfree (dm);
+call    0 never executed
+        -:  104:}
+        -:  105:
+        -:  106:/* Return true if KEYS, of length LEN, might contain a back-reference.
+        -:  107:   Return false if KEYS cannot contain a back-reference.
+        -:  108:   BS_SAFE is true of encodings where a backslash cannot appear as the
+        -:  109:   last byte of a multibyte character.  */
+        -:  110:static bool _GL_ATTRIBUTE_PURE
+function possible_backrefs_in_pattern called 0 returned 0% blocks executed 0%
+    #####:  111:possible_backrefs_in_pattern (char const *keys, ptrdiff_t len, bool bs_safe)
+        -:  112:{
+        -:  113:  /* Normally a backslash, but in an unsafe encoding this is a non-char
+        -:  114:     value so that the comparison below always fails, because if there
+        -:  115:     are two adjacent '\' bytes, the first might be the last byte of a
+        -:  116:     multibyte character.  */
+    #####:  117:  int second_backslash = bs_safe ? '\\' : CHAR_MAX + 1;
+branch  0 never executed
+branch  1 never executed
+        -:  118:
+        -:  119:  /* This code can return true even if KEYS lacks a back-reference, for
+        -:  120:     patterns like [\2], or for encodings where '\' appears as the last
+        -:  121:     byte of a multibyte character.  However, false alarms should be
+        -:  122:     rare and do not affect correctness.  */
+        -:  123:
+        -:  124:  /* Do not look for a backslash in the pattern's last byte, since it
+        -:  125:     can't be part of a back-reference and this streamlines the code.  */
+    #####:  126:  len--;
+        -:  127:
+    #####:  128:  if (0 <= len)
+branch  0 never executed
+branch  1 never executed
+        -:  129:    {
+    #####:  130:      char const *lim = keys + len;
+    #####:  131:      for (char const *p = keys; (p = memchr (p, '\\', lim - p)); p++)
+branch  0 never executed
+branch  1 never executed
+        -:  132:        {
+    #####:  133:          if ('1' <= p[1] && p[1] <= '9')
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  134:            return true;
+    #####:  135:          if (p[1] == second_backslash)
+branch  0 never executed
+branch  1 never executed
+        -:  136:            {
+    #####:  137:              p++;
+    #####:  138:              if (p == lim)
+branch  0 never executed
+branch  1 never executed
+    #####:  139:                break;
+        -:  140:            }
+        -:  141:        }
+        -:  142:    }
+    #####:  143:  return false;
+        -:  144:}
+        -:  145:
+        -:  146:static bool
+function regex_compile called 0 returned 0% blocks executed 0%
+    #####:  147:regex_compile (struct dfa_comp *dc, char const *p, ptrdiff_t len,
+        -:  148:               ptrdiff_t pcount, ptrdiff_t lineno, bool syntax_only)
+        -:  149:{
+        -:  150:  struct re_pattern_buffer pat0;
+    #####:  151:  struct re_pattern_buffer *pat = syntax_only ? &pat0 : &dc->patterns[pcount];
+branch  0 never executed
+branch  1 never executed
+    #####:  152:  pat->buffer = NULL;
+    #####:  153:  pat->allocated = 0;
+        -:  154:
+        -:  155:  /* Do not use a fastmap with -i, to work around glibc Bug#20381.  */
+    #####:  156:  pat->fastmap = syntax_only | match_icase ? NULL : xmalloc (UCHAR_MAX + 1);
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+        -:  157:
+    #####:  158:  pat->translate = NULL;
+        -:  159:
+    #####:  160:  char const *err = re_compile_pattern (p, len, pat);
+call    0 never executed
+    #####:  161:  if (!err)
+branch  0 never executed
+branch  1 never executed
+    #####:  162:    return true;
+        -:  163:
+        -:  164:  /* Emit a filename:lineno: prefix for patterns taken from files.  */
+    #####:  165:  size_t pat_lineno = lineno;
+    #####:  166:  char const *pat_filename
+    #####:  167:    = lineno < 0 ? "\0" : pattern_file_name (lineno + 1, &pat_lineno);
+branch  0 never executed
+branch  1 never executed
+call    2 never executed
+        -:  168:
+    #####:  169:  if (*pat_filename == '\0')
+branch  0 never executed
+branch  1 never executed
+    #####:  170:    error (0, 0, "%s", err);
+call    0 never executed
+        -:  171:  else
+    #####:  172:    error (0, 0, "%s:%zu: %s", pat_filename, pat_lineno, err);
+call    0 never executed
+        -:  173:
+    #####:  174:  return false;
+        -:  175:}
+        -:  176:
+        -:  177:void *
+function GEAcompile called 0 returned 0% blocks executed 0%
+    #####:  178:GEAcompile (char *pattern, size_t size, reg_syntax_t syntax_bits)
+        -:  179:{
+        -:  180:  char *motif;
+    #####:  181:  struct dfa_comp *dc = xcalloc (1, sizeof (*dc));
+call    0 never executed
+        -:  182:
+    #####:  183:  dc->dfa = dfaalloc ();
+call    0 never executed
+        -:  184:
+    #####:  185:  if (match_icase)
+branch  0 never executed
+branch  1 never executed
+    #####:  186:    syntax_bits |= RE_ICASE;
+    #####:  187:  re_set_syntax (syntax_bits);
+call    0 never executed
+    #####:  188:  int dfaopts = eolbyte ? 0 : DFA_EOL_NUL;
+branch  0 never executed
+branch  1 never executed
+    #####:  189:  dfasyntax (dc->dfa, &localeinfo, syntax_bits, dfaopts);
+call    0 never executed
+    #####:  190:  bool bs_safe = !localeinfo.multibyte | localeinfo.using_utf8;
+        -:  191:
+        -:  192:  /* For GNU regex, pass the patterns separately to detect errors like
+        -:  193:     "[\nallo\n]\n", where the patterns are "[", "allo" and "]", and
+        -:  194:     this should be a syntax error.  The same for backref, where the
+        -:  195:     backref should be local to each pattern.  */
+    #####:  196:  char const *p = pattern;
+    #####:  197:  char const *patlim = pattern + size;
+    #####:  198:  bool compilation_failed = false;
+        -:  199:
+    #####:  200:  dc->patterns = xmalloc (sizeof *dc->patterns);
+call    0 never executed
+    #####:  201:  dc->patterns++;
+    #####:  202:  dc->pcount = 0;
+    #####:  203:  size_t palloc = 1;
+        -:  204:
+    #####:  205:  char const *prev = pattern;
+        -:  206:
+        -:  207:  /* Buffer containing back-reference-free patterns.  */
+    #####:  208:  char *buf = NULL;
+    #####:  209:  ptrdiff_t buflen = 0;
+    #####:  210:  size_t bufalloc = 0;
+        -:  211:
+    #####:  212:  ptrdiff_t lineno = 0;
+        -:  213:
+        -:  214:  do
+        -:  215:    {
+        -:  216:      size_t len;
+    #####:  217:      char const *sep = memchr (p, '\n', patlim - p);
+    #####:  218:      if (sep)
+branch  0 never executed
+branch  1 never executed
+        -:  219:        {
+    #####:  220:          len = sep - p;
+    #####:  221:          sep++;
+        -:  222:        }
+        -:  223:      else
+    #####:  224:        len = patlim - p;
+        -:  225:
+    #####:  226:      bool backref = possible_backrefs_in_pattern (p, len, bs_safe);
+        -:  227:
+    #####:  228:      if (backref && prev < p)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  229:        {
+    #####:  230:          ptrdiff_t prevlen = p - prev;
+    #####:  231:          while (bufalloc < buflen + prevlen)
+branch  0 never executed
+branch  1 never executed
+    #####:  232:            buf = x2realloc (buf, &bufalloc);
+call    0 never executed
+    #####:  233:          memcpy (buf + buflen, prev, prevlen);
+    #####:  234:          buflen += prevlen;
+        -:  235:        }
+        -:  236:
+        -:  237:      /* Ensure room for at least two more patterns.  The extra one is
+        -:  238:         for the regex_compile that may be executed after this loop
+        -:  239:         exits, and its (unused) slot is patterns[-1] until then.  */
+    #####:  240:      while (palloc <= dc->pcount + 1)
+branch  0 never executed
+branch  1 never executed
+        -:  241:        {
+    #####:  242:          dc->patterns = x2nrealloc (dc->patterns - 1, &palloc,
+call    0 never executed
+        -:  243:                                     sizeof *dc->patterns);
+    #####:  244:          dc->patterns++;
+        -:  245:        }
+        -:  246:
+    #####:  247:      if (!regex_compile (dc, p, len, dc->pcount, lineno, !backref))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####:  248:        compilation_failed = true;
+        -:  249:
+    #####:  250:      p = sep;
+    #####:  251:      lineno++;
+        -:  252:
+    #####:  253:      if (backref)
+branch  0 never executed
+branch  1 never executed
+        -:  254:        {
+    #####:  255:          dc->pcount++;
+    #####:  256:          prev = p;
+        -:  257:        }
+        -:  258:    }
+    #####:  259:  while (p);
+branch  0 never executed
+branch  1 never executed
+        -:  260:
+    #####:  261:  if (compilation_failed)
+branch  0 never executed
+branch  1 never executed
+    #####:  262:    exit (EXIT_TROUBLE);
+call    0 never executed
+        -:  263:
+    #####:  264:  if (prev != NULL)
+branch  0 never executed
+branch  1 never executed
+        -:  265:    {
+    #####:  266:      if (pattern < prev)
+branch  0 never executed
+branch  1 never executed
+        -:  267:        {
+    #####:  268:          ptrdiff_t prevlen = patlim - prev;
+    #####:  269:          buf = xrealloc (buf, buflen + prevlen);
+call    0 never executed
+    #####:  270:          memcpy (buf + buflen, prev, prevlen);
+    #####:  271:          buflen += prevlen;
+        -:  272:        }
+        -:  273:      else
+        -:  274:        {
+    #####:  275:          buf = pattern;
+    #####:  276:          buflen = size;
+        -:  277:        }
+        -:  278:    }
+        -:  279:
+    #####:  280:  if (buf != NULL)
+branch  0 never executed
+branch  1 never executed
+        -:  281:    {
+    #####:  282:      dc->patterns--;
+    #####:  283:      dc->pcount++;
+        -:  284:
+    #####:  285:      if (!regex_compile (dc, buf, buflen, 0, -1, false))
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####:  286:        abort ();
+call    0 never executed
+        -:  287:
+    #####:  288:      if (buf != pattern)
+branch  0 never executed
+branch  1 never executed
+    #####:  289:        free (buf);
+        -:  290:    }
+        -:  291:
+        -:  292:  /* In the match_words and match_lines cases, we use a different pattern
+        -:  293:     for the DFA matcher that will quickly throw out cases that won't work.
+        -:  294:     Then if DFA succeeds we do some hairy stuff using the regex matcher
+        -:  295:     to decide whether the match should really count. */
+    #####:  296:  if (match_words || match_lines)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  297:    {
+        -:  298:      static char const line_beg_no_bk[] = "^(";
+        -:  299:      static char const line_end_no_bk[] = ")$";
+        -:  300:      static char const word_beg_no_bk[] = "(^|[^[:alnum:]_])(";
+        -:  301:      static char const word_end_no_bk[] = ")([^[:alnum:]_]|$)";
+        -:  302:      static char const line_beg_bk[] = "^\\(";
+        -:  303:      static char const line_end_bk[] = "\\)$";
+        -:  304:      static char const word_beg_bk[] = "\\(^\\|[^[:alnum:]_]\\)\\(";
+        -:  305:      static char const word_end_bk[] = "\\)\\([^[:alnum:]_]\\|$\\)";
+    #####:  306:      int bk = !(syntax_bits & RE_NO_BK_PARENS);
+    #####:  307:      char *n = xmalloc (sizeof word_beg_bk - 1 + size + sizeof word_end_bk);
+call    0 never executed
+        -:  308:
+    #####:  309:      strcpy (n, match_lines ? (bk ? line_beg_bk : line_beg_no_bk)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  310:                             : (bk ? word_beg_bk : word_beg_no_bk));
+branch  0 never executed
+branch  1 never executed
+    #####:  311:      size_t total = strlen (n);
+    #####:  312:      memcpy (n + total, pattern, size);
+    #####:  313:      total += size;
+    #####:  314:      strcpy (n + total, match_lines ? (bk ? line_end_bk : line_end_no_bk)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  315:                                     : (bk ? word_end_bk : word_end_no_bk));
+branch  0 never executed
+branch  1 never executed
+    #####:  316:      total += strlen (n + total);
+    #####:  317:      pattern = motif = n;
+    #####:  318:      size = total;
+        -:  319:    }
+        -:  320:  else
+    #####:  321:    motif = NULL;
+        -:  322:
+    #####:  323:  dfaparse (pattern, size, dc->dfa);
+call    0 never executed
+    #####:  324:  kwsmusts (dc);
+call    0 never executed
+    #####:  325:  dfacomp (NULL, 0, dc->dfa, 1);
+call    0 never executed
+        -:  326:
+    #####:  327:  free (motif);
+        -:  328:
+    #####:  329:  return dc;
+        -:  330:}
+        -:  331:
+        -:  332:size_t
+function EGexecute called 0 returned 0% blocks executed 0%
+    #####:  333:EGexecute (void *vdc, char const *buf, size_t size, size_t *match_size,
+        -:  334:           char const *start_ptr)
+        -:  335:{
+        -:  336:  char const *buflim, *beg, *end, *ptr, *match, *best_match, *mb_start;
+    #####:  337:  char eol = eolbyte;
+        -:  338:  regoff_t start;
+        -:  339:  size_t len, best_len;
+        -:  340:  struct kwsmatch kwsm;
+        -:  341:  size_t i;
+    #####:  342:  struct dfa_comp *dc = vdc;
+    #####:  343:  struct dfa *superset = dfasuperset (dc->dfa);
+    #####:  344:  bool dfafast = dfaisfast (dc->dfa);
+        -:  345:
+    #####:  346:  mb_start = buf;
+    #####:  347:  buflim = buf + size;
+        -:  348:
+    #####:  349:  for (beg = end = buf; end < buflim; beg = end)
+branch  0 never executed
+branch  1 never executed
+        -:  350:    {
+    #####:  351:      end = buflim;
+        -:  352:
+    #####:  353:      if (!start_ptr)
+branch  0 never executed
+branch  1 never executed
+        -:  354:        {
+    #####:  355:          char const *next_beg, *dfa_beg = beg;
+    #####:  356:          ptrdiff_t count = 0;
+    #####:  357:          bool exact_kwset_match = false;
+    #####:  358:          bool backref = false;
+        -:  359:
+        -:  360:          /* Try matching with KWset, if it's defined.  */
+    #####:  361:          if (dc->kwset)
+branch  0 never executed
+branch  1 never executed
+        -:  362:            {
+        -:  363:              char const *prev_beg;
+        -:  364:
+        -:  365:              /* Find a possible match using the KWset matcher.  */
+    #####:  366:              ptrdiff_t offset = kwsexec (dc->kwset, beg - dc->begline,
+call    0 never executed
+    #####:  367:                                          buflim - beg + dc->begline,
+        -:  368:                                          &kwsm, true);
+    #####:  369:              if (offset < 0)
+branch  0 never executed
+branch  1 never executed
+    #####:  370:                goto failure;
+    #####:  371:              match = beg + offset;
+    #####:  372:              prev_beg = beg;
+        -:  373:
+        -:  374:              /* Narrow down to the line containing the possible match.  */
+    #####:  375:              beg = memrchr (buf, eol, match - buf);
+    #####:  376:              beg = beg ? beg + 1 : buf;
+branch  0 never executed
+branch  1 never executed
+    #####:  377:              dfa_beg = beg;
+        -:  378:
+        -:  379:              /* Determine the end pointer to give the DFA next.  Typically
+        -:  380:                 this is after the first newline after MATCH; but if the KWset
+        -:  381:                 match is not exact, the DFA is fast, and the offset from
+        -:  382:                 PREV_BEG is less than 64 or (MATCH - PREV_BEG), this is the
+        -:  383:                 greater of the latter two values; this temporarily prefers
+        -:  384:                 the DFA to KWset.  */
+    #####:  385:              exact_kwset_match = kwsm.index < dc->kwset_exact_matches;
+    #####:  386:              end = ((exact_kwset_match || !dfafast
+branch  0 never executed
+branch  1 never executed
+    #####:  387:                      || MAX (16, match - beg) < (match - prev_beg) >> 2)
+branch  0 never executed
+branch  1 never executed
+        -:  388:                     ? match
+    #####:  389:                     : MAX (16, match - beg) < (buflim - prev_beg) >> 2
+branch  0 never executed
+branch  1 never executed
+    #####:  390:                     ? prev_beg + 4 * MAX (16, match - beg)
+    #####:  391:                     : buflim);
+branch  0 never executed
+branch  1 never executed
+    #####:  392:              end = memchr (end, eol, buflim - end);
+    #####:  393:              end = end ? end + 1 : buflim;
+branch  0 never executed
+branch  1 never executed
+        -:  394:
+    #####:  395:              if (exact_kwset_match)
+branch  0 never executed
+branch  1 never executed
+        -:  396:                {
+    #####:  397:                  if (!localeinfo.multibyte | localeinfo.using_utf8)
+branch  0 never executed
+branch  1 never executed
+    #####:  398:                    goto success;
+    #####:  399:                  if (mb_start < beg)
+branch  0 never executed
+branch  1 never executed
+    #####:  400:                    mb_start = beg;
+    #####:  401:                  if (mb_goback (&mb_start, NULL, match, buflim) == 0)
+call    0 never executed
+branch  1 never executed
+branch  2 never executed
+    #####:  402:                    goto success;
+        -:  403:                  /* The matched line starts in the middle of a multibyte
+        -:  404:                     character.  Perform the DFA search starting from the
+        -:  405:                     beginning of the next character.  */
+    #####:  406:                  dfa_beg = mb_start;
+        -:  407:                }
+        -:  408:            }
+        -:  409:
+        -:  410:          /* Try matching with the superset of DFA, if it's defined.  */
+    #####:  411:          if (superset && !exact_kwset_match)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  412:            {
+        -:  413:              /* Keep using the superset while it reports multiline
+        -:  414:                 potential matches; this is more likely to be fast
+        -:  415:                 than falling back to KWset would be.  */
+    #####:  416:              next_beg = dfaexec (superset, dfa_beg, (char *) end, 0,
+call    0 never executed
+        -:  417:                                  &count, NULL);
+    #####:  418:              if (next_beg == NULL || next_beg == end)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  419:                continue;
+        -:  420:
+        -:  421:              /* Narrow down to the line we've found.  */
+    #####:  422:              if (count != 0)
+branch  0 never executed
+branch  1 never executed
+        -:  423:                {
+    #####:  424:                  beg = memrchr (buf, eol, next_beg - buf);
+    #####:  425:                  beg++;
+    #####:  426:                  dfa_beg = beg;
+        -:  427:                }
+    #####:  428:              end = memchr (next_beg, eol, buflim - next_beg);
+    #####:  429:              end = end ? end + 1 : buflim;
+branch  0 never executed
+branch  1 never executed
+        -:  430:
+    #####:  431:              count = 0;
+        -:  432:            }
+        -:  433:
+        -:  434:          /* Try matching with DFA.  */
+    #####:  435:          next_beg = dfaexec (dc->dfa, dfa_beg, (char *) end, 0, &count,
+call    0 never executed
+        -:  436:                              &backref);
+        -:  437:
+        -:  438:          /* If there's no match, or if we've matched the sentinel,
+        -:  439:             we're done.  */
+    #####:  440:          if (next_beg == NULL || next_beg == end)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  441:            continue;
+        -:  442:
+        -:  443:          /* Narrow down to the line we've found.  */
+    #####:  444:          if (count != 0)
+branch  0 never executed
+branch  1 never executed
+        -:  445:            {
+    #####:  446:              beg = memrchr (buf, eol, next_beg - buf);
+    #####:  447:              beg++;
+        -:  448:            }
+    #####:  449:          end = memchr (next_beg, eol, buflim - next_beg);
+    #####:  450:          end = end ? end + 1 : buflim;
+branch  0 never executed
+branch  1 never executed
+        -:  451:
+        -:  452:          /* Successful, no back-references encountered! */
+    #####:  453:          if (!backref)
+branch  0 never executed
+branch  1 never executed
+    #####:  454:            goto success;
+    #####:  455:          ptr = beg;
+        -:  456:        }
+        -:  457:      else
+        -:  458:        {
+        -:  459:          /* We are looking for the leftmost (then longest) exact match.
+        -:  460:             We will go through the outer loop only once.  */
+    #####:  461:          ptr = start_ptr;
+        -:  462:        }
+        -:  463:
+        -:  464:      /* If the "line" is longer than the maximum regexp offset,
+        -:  465:         die as if we've run out of memory.  */
+        -:  466:      if (TYPE_MAXIMUM (regoff_t) < end - beg - 1)
+        -:  467:        xalloc_die ();
+        -:  468:
+        -:  469:      /* Run the possible match through Regex.  */
+    #####:  470:      best_match = end;
+    #####:  471:      best_len = 0;
+    #####:  472:      for (i = 0; i < dc->pcount; i++)
+branch  0 never executed
+branch  1 never executed
+        -:  473:        {
+    #####:  474:          dc->patterns[i].not_eol = 0;
+    #####:  475:          dc->patterns[i].newline_anchor = eolbyte == '\n';
+    #####:  476:          start = re_search (&dc->patterns[i], beg, end - beg - 1,
+call    0 never executed
+    #####:  477:                             ptr - beg, end - ptr - 1, &dc->regs);
+    #####:  478:          if (start < -1)
+branch  0 never executed
+branch  1 never executed
+    #####:  479:            xalloc_die ();
+call    0 never executed
+    #####:  480:          else if (0 <= start)
+branch  0 never executed
+branch  1 never executed
+        -:  481:            {
+    #####:  482:              len = dc->regs.end[0] - start;
+    #####:  483:              match = beg + start;
+    #####:  484:              if (match > best_match)
+branch  0 never executed
+branch  1 never executed
+    #####:  485:                continue;
+    #####:  486:              if (start_ptr && !match_words)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  487:                goto assess_pattern_match;
+    #####:  488:              if ((!match_lines && !match_words)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  489:                  || (match_lines && len == end - ptr - 1))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+        -:  490:                {
+    #####:  491:                  match = ptr;
+    #####:  492:                  len = end - ptr;
+    #####:  493:                  goto assess_pattern_match;
+        -:  494:                }
+        -:  495:              /* If -w and not -x, check whether the match aligns with
+        -:  496:                 word boundaries.  Do this iteratively because:
+        -:  497:                 (a) the line may contain more than one occurrence of the
+        -:  498:                 pattern, and
+        -:  499:                 (b) Several alternatives in the pattern might be valid at a
+        -:  500:                 given point, and we may need to consider a shorter one to
+        -:  501:                 find a word boundary.  */
+    #####:  502:              if (!match_lines && match_words)
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+    #####:  503:                while (match <= best_match)
+branch  0 never executed
+branch  1 never executed
+        -:  504:                  {
+    #####:  505:                    regoff_t shorter_len = 0;
+    #####:  506:                    if (! wordchar_next (match + len, end - 1)
+branch  0 never executed
+branch  1 never executed
+    #####:  507:                        && ! wordchar_prev (beg, match, end - 1))
+branch  0 never executed
+branch  1 never executed
+    #####:  508:                      goto assess_pattern_match;
+    #####:  509:                    if (len > 0)
+branch  0 never executed
+branch  1 never executed
+        -:  510:                      {
+        -:  511:                        /* Try a shorter length anchored at the same place. */
+    #####:  512:                        --len;
+    #####:  513:                        dc->patterns[i].not_eol = 1;
+    #####:  514:                        shorter_len = re_match (&dc->patterns[i], beg,
+call    0 never executed
+    #####:  515:                                                match + len - ptr, match - beg,
+        -:  516:                                                &dc->regs);
+    #####:  517:                        if (shorter_len < -1)
+branch  0 never executed
+branch  1 never executed
+    #####:  518:                          xalloc_die ();
+call    0 never executed
+        -:  519:                      }
+    #####:  520:                    if (0 < shorter_len)
+branch  0 never executed
+branch  1 never executed
+    #####:  521:                      len = shorter_len;
+        -:  522:                    else
+        -:  523:                      {
+        -:  524:                        /* Try looking further on. */
+    #####:  525:                        if (match == end - 1)
+branch  0 never executed
+branch  1 never executed
+    #####:  526:                          break;
+    #####:  527:                        match++;
+    #####:  528:                        dc->patterns[i].not_eol = 0;
+    #####:  529:                        start = re_search (&dc->patterns[i], beg, end - beg - 1,
+call    0 never executed
+    #####:  530:                                           match - beg, end - match - 1,
+        -:  531:                                           &dc->regs);
+    #####:  532:                        if (start < 0)
+branch  0 never executed
+branch  1 never executed
+        -:  533:                          {
+    #####:  534:                            if (start < -1)
+branch  0 never executed
+branch  1 never executed
+    #####:  535:                              xalloc_die ();
+call    0 never executed
+    #####:  536:                            break;
+        -:  537:                          }
+    #####:  538:                        len = dc->regs.end[0] - start;
+    #####:  539:                        match = beg + start;
+        -:  540:                      }
+        -:  541:                  } /* while (match <= best_match) */
+    #####:  542:              continue;
+    #####:  543:            assess_pattern_match:
+    #####:  544:              if (!start_ptr)
+branch  0 never executed
+branch  1 never executed
+        -:  545:                {
+        -:  546:                  /* Good enough for a non-exact match.
+        -:  547:                     No need to look at further patterns, if any.  */
+    #####:  548:                  goto success;
+        -:  549:                }
+    #####:  550:              if (match < best_match || (match == best_match && len > best_len))
+branch  0 never executed
+branch  1 never executed
+branch  2 never executed
+branch  3 never executed
+branch  4 never executed
+branch  5 never executed
+        -:  551:                {
+        -:  552:                  /* Best exact match:  leftmost, then longest.  */
+    #####:  553:                  best_match = match;
+    #####:  554:                  best_len = len;
+        -:  555:                }
+        -:  556:            } /* if re_search >= 0 */
+        -:  557:        } /* for Regex patterns.  */
+    #####:  558:        if (best_match < end)
+branch  0 never executed
+branch  1 never executed
+        -:  559:          {
+        -:  560:            /* We have found an exact match.  We were just
+        -:  561:               waiting for the best one (leftmost then longest).  */
+    #####:  562:            beg = best_match;
+    #####:  563:            len = best_len;
+    #####:  564:            goto success_in_len;
+        -:  565:          }
+        -:  566:    } /* for (beg = end ..) */
+        -:  567:
+    #####:  568: failure:
+    #####:  569:  return -1;
+        -:  570:
+    #####:  571: success:
+    #####:  572:  len = end - beg;
+    #####:  573: success_in_len:;
+    #####:  574:  size_t off = beg - buf;
+    #####:  575:  *match_size = len;
+    #####:  576:  return off;
+        -:  577:}
