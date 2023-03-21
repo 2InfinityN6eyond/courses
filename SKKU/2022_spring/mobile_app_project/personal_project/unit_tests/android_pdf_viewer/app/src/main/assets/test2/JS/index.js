@@ -1,4 +1,4 @@
-const zoomButton = document.getElementById('zoom');
+//const zoomButton = document.getElementById('zoom');
 const input = document.getElementById('inputFile');
 const openFile = document.getElementById('openPDF');
 const currentPage = document.getElementById('current_page');
@@ -35,13 +35,14 @@ input.addEventListener('change', event => {
 });
 
 
-zoomButton.addEventListener('input', () => {
+/*zoomButton.addEventListener('input', () => {
 	if (currentPDF.file) {
 		document.getElementById('zoomValue').innerHTML = zoomButton.value + "%";
 		currentPDF.zoom = parseInt(zoomButton.value) / 100;
 		renderCurrentPage();
 	}
 });
+*/
 
 document.getElementById('next').addEventListener('click', () => {
 	const isValidPage = currentPDF.currentPage < currentPDF.countOfPages;
